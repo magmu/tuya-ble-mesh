@@ -599,6 +599,30 @@ class TestVendorUpdate:
         coord._on_vendor_update(TUYA_VENDOR_OPCODE, bytes([0x01, len(dps)]) + dps)
         assert dict(coord.state.tuya_dps) == {101: 80, 102: True}
 
+    @pytest.mark.asyncio
+    async def test_timestamp_reply_waits_for_connection(self) -> None:
+        """A time request that arrives mid-connect is answered once connected."""
+        device = make_mock_device()
+        device.is_connected = False
+        sent_while_connected: list[bool] = []
+
+        async def _send(_payload: bytes) -> None:
+            sent_while_connected.append(device.is_connected)
+
+        device.send_vendor_command = AsyncMock(side_effect=_send)
+        device.request_tuya_dps = AsyncMock()
+        coord = TuyaBLEMeshCoordinator(device)
+
+        async def _connect_later() -> None:
+            await asyncio.sleep(0.3)
+            device.is_connected = True
+
+        with patch("custom_components.tuya_ble_mesh.coordinator._TIMESTAMP_POLL_SECONDS", 0.05):
+            await asyncio.gather(coord._send_timestamp_response(), _connect_later())
+
+        assert sent_while_connected == [True]
+        device.request_tuya_dps.assert_awaited_once()
+
     def test_vendor_update_sets_energy(self) -> None:
         """Energy DP should set energy_kwh in state."""
         device = make_mock_device()
