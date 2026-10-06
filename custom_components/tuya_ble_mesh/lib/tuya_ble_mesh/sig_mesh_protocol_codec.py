@@ -429,18 +429,53 @@ def parse_tuya_vendor_frame(params: bytes) -> TuyaVendorFrame:
     return TuyaVendorFrame(command=command, data=params, dps=_parse_dp_bytes(params))
 
 
-def tuya_vendor_timestamp_response() -> bytes:
-    """Build a Tuya vendor WRITE_UNACK payload with current UTC timestamp."""
+# Tuya lists timestamp sync (command 0x02) in its vendor model spec but does
+# not document the reply, so several candidate layouts are kept. Variant 0 is
+# the original guess; the others follow Tuya's plain-Bluetooth time formats.
+TUYA_TIMESTAMP_VARIANTS = 6
+
+
+def tuya_vendor_timestamp_response(variant: int = 0, now: float | None = None) -> bytes:
+    """Build a Tuya vendor WRITE_UNACK timestamp-sync reply.
+
+    Variants (data after the ``[0x02][len]`` header):
+        0: UTC seconds 4B BE, tz hours 1B signed, 3 zero bytes
+        1: UTC seconds 4B BE, tz hundredths of hours 2B BE signed
+        2: UTC milliseconds as 13 ASCII digits, tz hundredths 2B BE signed
+        3: UTC seconds 4B LE, tz hours 1B signed
+        4: local year 2B BE, month, day, hour, minute, second, weekday (0=Sun),
+           tz hundredths 2B BE signed
+        5: local seconds (UTC + offset) 4B BE
+    """
     import time
 
-    now = int(time.time())
-    opcode_bytes = TUYA_VENDOR_WRITE_UNACK.to_bytes(3, "big")
-    ts_bytes = now.to_bytes(4, "big")
-    tz_offset = time.timezone // -3600 if not time.daylight else time.altzone // -3600
-    tz_byte = tz_offset.to_bytes(1, "big", signed=True) if -12 <= tz_offset <= 14 else b"\x00"
-    data = ts_bytes + tz_byte + b"\x00\x00\x00"
+    ts = time.time() if now is None else now
+    secs = int(ts)
+    offset = -(time.altzone if time.localtime(secs).tm_isdst > 0 else time.timezone)
+    tz_hours = max(-12, min(14, offset // 3600))
+    tz_hundredths = (offset * 100) // 3600
+    v = variant % TUYA_TIMESTAMP_VARIANTS
+    if v == 0:
+        data = secs.to_bytes(4, "big") + tz_hours.to_bytes(1, "big", signed=True) + b"\x00" * 3
+    elif v == 1:
+        data = secs.to_bytes(4, "big") + tz_hundredths.to_bytes(2, "big", signed=True)
+    elif v == 2:
+        data = str(int(ts * 1000)).zfill(13).encode() + tz_hundredths.to_bytes(
+            2, "big", signed=True
+        )
+    elif v == 3:
+        data = secs.to_bytes(4, "little") + tz_hours.to_bytes(1, "big", signed=True)
+    elif v == 4:
+        lt = time.localtime(secs)
+        data = (
+            lt.tm_year.to_bytes(2, "big")
+            + bytes([lt.tm_mon, lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec, (lt.tm_wday + 1) % 7])
+            + tz_hundredths.to_bytes(2, "big", signed=True)
+        )
+    else:
+        data = (secs + offset).to_bytes(4, "big")
     frame = bytes([TUYA_CMD_TIMESTAMP_SYNC, len(data)]) + data
-    return opcode_bytes + frame
+    return TUYA_VENDOR_WRITE_UNACK.to_bytes(3, "big") + frame
 
 
 TUYA_DP_TYPE_RAW = 0x00

@@ -153,6 +153,8 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         self._device: AnyMeshDevice = device
         self.capabilities = DeviceCapabilities.from_device(device)
         self._state = TuyaBLEMeshDeviceState()
+        # Which candidate time-reply layout to try next (see codec)
+        self._timestamp_variant = 0
         self._hass = hass
         self._entry_id = entry_id
         self._entry = entry
@@ -872,7 +874,10 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             self._dispatch_update()
 
     async def _send_timestamp_response(self) -> None:
-        from tuya_ble_mesh.sig_mesh_protocol import tuya_vendor_timestamp_response
+        from tuya_ble_mesh.sig_mesh_protocol import (
+            TUYA_TIMESTAMP_VARIANTS,
+            tuya_vendor_timestamp_response,
+        )
 
         # The cap asks for the time the moment notifications start, before the
         # connection is marked ready; wait for it instead of failing.
@@ -880,12 +885,20 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         while not self._device.is_connected and waited < _TIMESTAMP_WAIT_SECONDS:
             await asyncio.sleep(_TIMESTAMP_POLL_SECONDS)
             waited += _TIMESTAMP_POLL_SECONDS
+        # The reply layout is undocumented; each request gets the next candidate
+        # so the log shows which one makes the device stop asking.
+        variant = self._timestamp_variant
+        self._timestamp_variant += 1
         try:
-            await self._device.send_vendor_command(tuya_vendor_timestamp_response())
+            await self._device.send_vendor_command(tuya_vendor_timestamp_response(variant))
         except Exception:
             _LOGGER.warning("Failed to send timestamp sync response", exc_info=True)
             return
-        _LOGGER.debug("Timestamp sync response sent to %s", self._device.address)
+        _LOGGER.info(
+            "Time reply format %d sent to %s",
+            variant % TUYA_TIMESTAMP_VARIANTS,
+            self._device.address,
+        )
         # Some Tuya firmware only reports data points once its clock is set
         request_dps = getattr(self._device, "request_tuya_dps", None)
         if request_dps is not None:

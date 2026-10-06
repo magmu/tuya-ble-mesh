@@ -28,6 +28,7 @@ from tuya_ble_mesh.exceptions import ProtocolError
 from tuya_ble_mesh.sig_mesh_protocol_codec import (
     TUYA_CMD_DP_DATA,
     TUYA_CMD_TIMESTAMP_SYNC,
+    TUYA_TIMESTAMP_VARIANTS,
     config_appkey_add,
     config_model_app_bind,
     parse_tuya_vendor_frame,
@@ -149,6 +150,30 @@ class TestTuyaVendorTimestampResponse:
         result = tuya_vendor_timestamp_response()
         # First 3 bytes = opcode, 4th byte = TUYA_CMD_TIMESTAMP_SYNC (0x02)
         assert result[3] == TUYA_CMD_TIMESTAMP_SYNC
+
+    @pytest.mark.parametrize(
+        ("variant", "data_len"), [(0, 8), (1, 6), (2, 15), (3, 5), (4, 10), (5, 4)]
+    )
+    def test_variant_lengths(self, variant: int, data_len: int) -> None:
+        """Every candidate layout has a header whose length matches its data."""
+        result = tuya_vendor_timestamp_response(variant, now=1_760_000_000.5)
+        assert result[3] == TUYA_CMD_TIMESTAMP_SYNC
+        assert result[4] == data_len
+        assert len(result) == 5 + data_len
+
+    def test_variant_fields(self) -> None:
+        now = 1_760_000_000.5
+        assert int.from_bytes(tuya_vendor_timestamp_response(1, now)[5:9], "big") == 1_760_000_000
+        assert tuya_vendor_timestamp_response(2, now)[5:18] == b"1760000000500"
+        assert (
+            int.from_bytes(tuya_vendor_timestamp_response(3, now)[5:9], "little") == 1_760_000_000
+        )
+
+    def test_variants_wrap(self) -> None:
+        now = 1_760_000_000.0
+        assert tuya_vendor_timestamp_response(TUYA_TIMESTAMP_VARIANTS, now) == (
+            tuya_vendor_timestamp_response(0, now)
+        )
 
     def test_timestamp_value_is_recent(self) -> None:
         import time

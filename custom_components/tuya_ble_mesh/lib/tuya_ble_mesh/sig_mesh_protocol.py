@@ -86,6 +86,7 @@ from tuya_ble_mesh.sig_mesh_protocol_codec import (  # noqa: F401  — re-export
     SEG_DATA_SIZE,
     TUYA_CMD_DP_DATA,
     TUYA_CMD_TIMESTAMP_SYNC,
+    TUYA_TIMESTAMP_VARIANTS,
     TUYA_VENDOR_CID,
     TUYA_VENDOR_OPCODE,
     TUYA_VENDOR_READ,

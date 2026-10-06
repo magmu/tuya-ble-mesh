@@ -623,6 +623,24 @@ class TestVendorUpdate:
         assert sent_while_connected == [True]
         device.request_tuya_dps.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_timestamp_reply_rotates_formats(self) -> None:
+        """Each time request is answered with the next candidate layout."""
+        from tuya_ble_mesh.sig_mesh_protocol import TUYA_TIMESTAMP_VARIANTS
+
+        device = make_mock_device()
+        device.is_connected = True
+        device.send_vendor_command = AsyncMock()
+        device.request_tuya_dps = AsyncMock()
+        coord = TuyaBLEMeshCoordinator(device)
+
+        lengths = []
+        for _ in range(TUYA_TIMESTAMP_VARIANTS + 1):
+            await coord._send_timestamp_response()
+            lengths.append(device.send_vendor_command.await_args.args[0][4])
+        assert len(set(lengths)) == TUYA_TIMESTAMP_VARIANTS
+        assert lengths[-1] == lengths[0]
+
     def test_vendor_update_sets_energy(self) -> None:
         """Energy DP should set energy_kwh in state."""
         device = make_mock_device()
