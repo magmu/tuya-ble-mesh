@@ -528,3 +528,18 @@ class TestRequestTuyaDps:
         dev._composition.elements = (element,)
         await dev.request_tuya_dps()
         dev._client.write_gatt_char.assert_not_called()
+
+
+class TestDecodeTuyaDpValue:
+    """DP value decoding by Tuya type."""
+
+    def test_types(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import decode_tuya_dp_value
+
+        assert decode_tuya_dp_value(0x01, b"\x01") is True
+        assert decode_tuya_dp_value(0x02, b"\x00\x00\x00\x57") == 87
+        assert decode_tuya_dp_value(0x02, b"\xff\xff\xff\xff") == -1
+        assert decode_tuya_dp_value(0x03, b"ok") == "ok"
+        assert decode_tuya_dp_value(0x04, b"\x02") == 2
+        assert decode_tuya_dp_value(0x05, b"\x00\x05") == 5
+        assert decode_tuya_dp_value(0x00, b"\xab\xcd") == "abcd"

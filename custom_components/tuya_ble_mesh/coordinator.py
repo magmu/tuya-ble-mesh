@@ -114,10 +114,14 @@ class TuyaBLEMeshDeviceState:
     device_availability: str = DeviceAvailabilityState.UNKNOWN.value
     consecutive_write_failures: int = 0
     degraded_reason: str | None = None
+    # Latest value of every Tuya data point the device has reported, by DP id
+    tuya_dps: MappingProxyType[int, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 # Civil twilight: solar lights may still be dark-sensing until the sun is this low
 _SOLAR_DARK_ELEVATION = -6.0
+_TIMESTAMP_WAIT_SECONDS = 10.0
+_TIMESTAMP_POLL_SECONDS = 0.25
 
 
 def _is_daylight(hass: HomeAssistant) -> bool:
@@ -814,6 +818,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             DP_ID_POWER_W,
             TUYA_CMD_TIMESTAMP_SYNC,
             TUYA_VENDOR_OPCODE,
+            decode_tuya_dp_value,
             parse_tuya_vendor_frame,
         )
 
@@ -824,6 +829,11 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             _LOGGER.info("Device requested timestamp sync — sending response")
             self._create_background_task(self._send_timestamp_response(), "timestamp_sync_response")
             return
+        if frame.dps:
+            dps = dict(self._state.tuya_dps)
+            for dp in frame.dps:
+                dps[dp.dp_id] = decode_tuya_dp_value(dp.dp_type, dp.value)
+            self._state = replace(self._state, tuya_dps=MappingProxyType(dps))
         power_w, energy_kwh, updated = self._state.power_w, self._state.energy_kwh, False
         for dp in frame.dps:
             if dp.dp_id == DP_ID_POWER_W and len(dp.value) >= 1:
@@ -858,15 +868,31 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
                 last_update_source=StateUpdateSource.NOTIFY.value,
                 last_update_time=now,
             )
+        if frame.dps:
             self._dispatch_update()
 
     async def _send_timestamp_response(self) -> None:
         from tuya_ble_mesh.sig_mesh_protocol import tuya_vendor_timestamp_response
 
+        # The cap asks for the time the moment notifications start, before the
+        # connection is marked ready; wait for it instead of failing.
+        waited = 0.0
+        while not self._device.is_connected and waited < _TIMESTAMP_WAIT_SECONDS:
+            await asyncio.sleep(_TIMESTAMP_POLL_SECONDS)
+            waited += _TIMESTAMP_POLL_SECONDS
         try:
             await self._device.send_vendor_command(tuya_vendor_timestamp_response())
         except Exception:
             _LOGGER.warning("Failed to send timestamp sync response", exc_info=True)
+            return
+        _LOGGER.debug("Timestamp sync response sent to %s", self._device.address)
+        # Some Tuya firmware only reports data points once its clock is set
+        request_dps = getattr(self._device, "request_tuya_dps", None)
+        if request_dps is not None:
+            try:
+                await request_dps()
+            except Exception:
+                _LOGGER.debug("Data point query after time sync failed", exc_info=True)
 
     def seed_firmware_version(self, version: str | None) -> None:
         """Show a previously stored firmware version until the device reports one."""

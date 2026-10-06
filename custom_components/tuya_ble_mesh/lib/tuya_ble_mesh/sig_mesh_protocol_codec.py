@@ -443,6 +443,30 @@ def tuya_vendor_timestamp_response() -> bytes:
     return opcode_bytes + frame
 
 
+TUYA_DP_TYPE_RAW = 0x00
+TUYA_DP_TYPE_BOOL = 0x01
+TUYA_DP_TYPE_VALUE = 0x02
+TUYA_DP_TYPE_STRING = 0x03
+TUYA_DP_TYPE_ENUM = 0x04
+TUYA_DP_TYPE_BITMAP = 0x05
+
+
+def decode_tuya_dp_value(dp_type: int, value: bytes) -> bool | int | str:
+    """Decode a Tuya DP value by its type: bool, int (value/enum/bitmap), text, or hex."""
+    if dp_type == TUYA_DP_TYPE_BOOL and len(value) == 1:
+        return value[0] != 0
+    if dp_type == TUYA_DP_TYPE_VALUE and value:
+        return int.from_bytes(value, "big", signed=True)
+    if dp_type in (TUYA_DP_TYPE_ENUM, TUYA_DP_TYPE_BITMAP) and value:
+        return int.from_bytes(value, "big")
+    if dp_type == TUYA_DP_TYPE_STRING:
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex()
+    return value.hex()
+
+
 def tuya_vendor_dp_query() -> bytes:
     """Build a Tuya vendor READ payload asking the device to report all its DPs.
 

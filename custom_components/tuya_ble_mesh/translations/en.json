@@ -167,6 +167,9 @@
       },
       "last_seen": {
         "name": "Last contact"
+      },
+      "tuya_data_points": {
+        "name": "Tuya data points"
       }
     },
     "binary_sensor": {

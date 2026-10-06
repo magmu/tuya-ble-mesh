@@ -36,8 +36,8 @@ class TestSensorDescriptions:
     """Test SENSOR_DESCRIPTIONS configuration and structure."""
 
     def test_sensor_descriptions_count(self) -> None:
-        """Verify we have exactly 6 sensor descriptions."""
-        assert len(SENSOR_DESCRIPTIONS) == 6
+        """Verify we have exactly 7 sensor descriptions."""
+        assert len(SENSOR_DESCRIPTIONS) == 7
 
     def test_rssi_description(self) -> None:
         """Test RSSI sensor description properties."""

@@ -583,6 +583,46 @@ class TestVendorUpdate:
         assert coord.state.power_w == 42.5
         assert coord.state.available is True
 
+    def test_vendor_update_records_every_dp(self) -> None:
+        """Every reported DP is kept by id with its decoded value."""
+        coord = TuyaBLEMeshCoordinator(make_mock_device())
+
+        from tuya_ble_mesh.sig_mesh_protocol import TUYA_VENDOR_OPCODE
+
+        # Frame: cmd 0x01 (DP data), len, then DP 101 value=87 and DP 102 bool=1
+        dps = bytes([101, 0x02, 0x04, 0, 0, 0, 87, 102, 0x01, 0x01, 0x01])
+        coord._on_vendor_update(TUYA_VENDOR_OPCODE, bytes([0x01, len(dps)]) + dps)
+        assert dict(coord.state.tuya_dps) == {101: 87, 102: True}
+
+        # A later report updates one DP and keeps the rest
+        dps = bytes([101, 0x02, 0x04, 0, 0, 0, 80])
+        coord._on_vendor_update(TUYA_VENDOR_OPCODE, bytes([0x01, len(dps)]) + dps)
+        assert dict(coord.state.tuya_dps) == {101: 80, 102: True}
+
+    @pytest.mark.asyncio
+    async def test_timestamp_reply_waits_for_connection(self) -> None:
+        """A time request that arrives mid-connect is answered once connected."""
+        device = make_mock_device()
+        device.is_connected = False
+        sent_while_connected: list[bool] = []
+
+        async def _send(_payload: bytes) -> None:
+            sent_while_connected.append(device.is_connected)
+
+        device.send_vendor_command = AsyncMock(side_effect=_send)
+        device.request_tuya_dps = AsyncMock()
+        coord = TuyaBLEMeshCoordinator(device)
+
+        async def _connect_later() -> None:
+            await asyncio.sleep(0.3)
+            device.is_connected = True
+
+        with patch("custom_components.tuya_ble_mesh.coordinator._TIMESTAMP_POLL_SECONDS", 0.05):
+            await asyncio.gather(coord._send_timestamp_response(), _connect_later())
+
+        assert sent_while_connected == [True]
+        device.request_tuya_dps.assert_awaited_once()
+
     def test_vendor_update_sets_energy(self) -> None:
         """Energy DP should set energy_kwh in state."""
         device = make_mock_device()
