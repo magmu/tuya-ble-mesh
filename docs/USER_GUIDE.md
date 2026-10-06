@@ -41,10 +41,14 @@ This guide walks you through setting up and using the Tuya BLE Mesh integration 
 
 ### Method 1: HACS (Recommended)
 
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=magmu&repository=tuya-ble-mesh&category=integration)
+
+Or add it by hand:
+
 1. Open HACS in Home Assistant
 2. Click **Integrations**
 3. Click the three-dot menu → **Custom repositories**
-4. Add repository URL: `https://github.com/11z4t/tuya-ble-mesh`
+4. Add repository URL: `https://github.com/magmu/tuya-ble-mesh`
 5. Select category: **Integration**
 6. Click **Add**
 7. Search for **"Tuya BLE Mesh"**
@@ -315,7 +319,7 @@ data:
 1. **Set up Raspberry Pi:**
    ```bash
    # On the RPi
-   git clone https://github.com/11z4t/tuya-ble-mesh.git
+   git clone https://github.com/magmu/tuya-ble-mesh.git
    cd tuya-ble-mesh
    python -m venv venv
    source venv/bin/activate
@@ -385,7 +389,7 @@ data:
 
 ## Getting Help
 
-- **GitHub Issues:** https://github.com/11z4t/tuya-ble-mesh/issues
+- **GitHub Issues:** https://github.com/magmu/tuya-ble-mesh/issues
 - **Home Assistant Community:** https://community.home-assistant.io
 - **Enable debug logging:**
   ```yaml

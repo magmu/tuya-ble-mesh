@@ -23,7 +23,7 @@
   "documentation": "https://github.com/magmu/tuya-ble-mesh",
   "integration_type": "device",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/11z4t/tuya-ble-mesh/issues",
+  "issue_tracker": "https://github.com/magmu/tuya-ble-mesh/issues",
   "loggers": [
     "tuya_ble_mesh"
   ],
@@ -31,5 +31,5 @@
     "bleak>=0.21",
     "bleak-retry-connector>=3.0"
   ],
-  "version": "0.42.11"
+  "version": "0.42.12"
 }

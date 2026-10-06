@@ -6,13 +6,13 @@ Thank you for considering contributing! This document explains how.
 
 ### Reporting Bugs
 
-1. Check [existing issues](https://github.com/11z4t/tuya-ble-mesh/issues) first
+1. Check [existing issues](https://github.com/magmu/tuya-ble-mesh/issues) first
 2. Use the **Bug Report** issue template
 3. Include: HA version, integration version, device model, debug logs, steps to reproduce
 
 ### Suggesting Features
 
-1. Check [existing discussions](https://github.com/11z4t/tuya-ble-mesh/discussions) first
+1. Check [existing issues](https://github.com/magmu/tuya-ble-mesh/issues) first
 2. Use the **Feature Request** issue template
 3. Explain the use case and proposed solution
 
@@ -31,7 +31,7 @@ If you want to add a new device:
 ### Setup
 
 ```bash
-git clone https://github.com/11z4t/tuya-ble-mesh.git
+git clone https://github.com/magmu/tuya-ble-mesh.git
 cd tuya-ble-mesh
 
 python -m venv venv
@@ -153,7 +153,7 @@ Before submitting:
 
 ## Questions?
 
-- Open a [GitHub Discussion](https://github.com/11z4t/tuya-ble-mesh/discussions)
-- Check the [Wiki](https://github.com/11z4t/tuya-ble-mesh/wiki) for architecture docs
+- Open a [GitHub issue](https://github.com/magmu/tuya-ble-mesh/issues)
+- Check the [docs](https://github.com/magmu/tuya-ble-mesh/tree/main/docs) for architecture docs
 
 Thank you for contributing!
