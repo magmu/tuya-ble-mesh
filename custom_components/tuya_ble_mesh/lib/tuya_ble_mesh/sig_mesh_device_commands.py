@@ -37,6 +37,7 @@ from tuya_ble_mesh.sig_mesh_device_segments import (
     _OPCODE_MODEL_APP_STATUS,
 )
 from tuya_ble_mesh.sig_mesh_protocol import (
+    MODEL_LIGHT_CTL_TEMPERATURE_SERVER,
     OP_CONFIG_COMPOSITION_STATUS,
     SEG_DATA_SIZE,
     config_appkey_add,
@@ -46,6 +47,7 @@ from tuya_ble_mesh.sig_mesh_protocol import (
     generic_onoff_get,
     generic_onoff_set,
     light_ctl_set,
+    light_ctl_temperature_set,
     light_hsl_set,
     light_lightness_set,
     light_state_gets,
@@ -247,12 +249,15 @@ class SIGMeshDeviceCommandsMixin:
             len(access_payload),
         )
 
-    async def _send_app_message(self, access_payload: bytes, description: str) -> None:
+    async def _send_app_message(
+        self, access_payload: bytes, description: str, *, dst: int | None = None
+    ) -> None:
         """Encrypt an unsegmented access message with the AppKey and send it.
 
         Args:
             access_payload: Complete access payload including opcode.
             description: Short label for the log line.
+            dst: Destination element address (default: the node's primary element).
 
         Raises:
             SIGMeshError: If not connected or keys not loaded.
@@ -267,11 +272,12 @@ class SIGMeshDeviceCommandsMixin:
             msg = "No application key loaded"
             raise SIGMeshKeyError(msg)
 
+        dst_addr = self._target_addr if dst is None else dst
         seq = await self._next_seq()
         transport_pdu = make_access_unsegmented(
             app_key,
             self._our_addr,
-            self._target_addr,
+            dst_addr,
             seq,
             self._keys.iv_index,
             access_payload,
@@ -286,14 +292,14 @@ class SIGMeshDeviceCommandsMixin:
             ttl=_DEFAULT_TTL,
             seq=seq,
             src=self._our_addr,
-            dst=self._target_addr,
+            dst=dst_addr,
             transport_pdu=transport_pdu,
             iv_index=self._keys.iv_index,
         )
         await self._client.write_gatt_char(
             SIG_MESH_PROXY_DATA_IN, make_proxy_pdu(network_pdu), response=False
         )
-        _LOGGER.info("%s sent to 0x%04X (seq=%d)", description, self._target_addr, seq)
+        _LOGGER.info("%s sent to 0x%04X (seq=%d)", description, dst_addr, seq)
 
     def _take_tid(self) -> int:
         tid = self._tid
@@ -323,6 +329,27 @@ class SIGMeshDeviceCommandsMixin:
         await self._send_app_message(
             light_ctl_set(lightness, temperature, 0, self._take_tid()),
             f"Light CTL {lightness}/{temperature}K",
+        )
+
+    def _ctl_temperature_element(self) -> int:
+        """Address of the element holding the CTL Temperature Server.
+
+        The CTL Temperature state lives on a secondary element (usually the
+        next one after the CTL Server), per the Mesh Model spec.
+        """
+        composition = self._composition
+        if composition is not None:
+            for index, element in enumerate(composition.elements):
+                if MODEL_LIGHT_CTL_TEMPERATURE_SERVER in element.sig_models:
+                    return int(self._target_addr) + index
+        return int(self._target_addr) + 1
+
+    async def send_light_ctl_temperature(self, temperature: int) -> None:
+        """Send Light CTL Temperature Set (kelvin) to the CTL Temperature element."""
+        await self._send_app_message(
+            light_ctl_temperature_set(temperature, 0, self._take_tid()),
+            f"Light CTL Temperature {temperature}K",
+            dst=self._ctl_temperature_element(),
         )
 
     async def send_light_hsl(self, lightness: int, hue: int, saturation: int) -> None:

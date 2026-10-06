@@ -78,6 +78,8 @@ OP_LIGHT_CTL_SET = 0x825E
 OP_LIGHT_CTL_STATUS = 0x8260
 OP_LIGHT_CTL_TEMP_RANGE_GET = 0x8262
 OP_LIGHT_CTL_TEMP_RANGE_STATUS = 0x8263
+OP_LIGHT_CTL_TEMPERATURE_SET = 0x8264
+OP_LIGHT_CTL_TEMPERATURE_STATUS = 0x8266
 OP_LIGHT_HSL_GET = 0x826D
 OP_LIGHT_HSL_SET = 0x8276
 OP_LIGHT_HSL_STATUS = 0x8278
@@ -90,6 +92,7 @@ MODEL_HEALTH_CLIENT = 0x0003
 MODEL_GENERIC_ONOFF_SERVER = 0x1000
 MODEL_LIGHT_LIGHTNESS_SERVER = 0x1300
 MODEL_LIGHT_CTL_SERVER = 0x1303
+MODEL_LIGHT_CTL_TEMPERATURE_SERVER = 0x1306
 MODEL_LIGHT_HSL_SERVER = 0x1307
 
 # Foundation models use the device key and must never be bound to an AppKey
@@ -292,6 +295,19 @@ def light_ctl_set(lightness: int, temperature: int, delta_uv: int = 0, tid: int 
     )
 
 
+def light_ctl_temperature_set(temperature: int, delta_uv: int = 0, tid: int = 0) -> bytes:
+    """Light CTL Temperature Set (opcode 0x8264). Temperature is kelvin, 800..20000."""
+    if not LIGHT_CTL_TEMP_MIN <= temperature <= LIGHT_CTL_TEMP_MAX:
+        msg = f"temperature must be {LIGHT_CTL_TEMP_MIN}..{LIGHT_CTL_TEMP_MAX}, got {temperature}"
+        raise ProtocolError(msg)
+    if not -0x8000 <= delta_uv <= 0x7FFF:
+        msg = f"delta_uv must be a signed 16-bit value, got {delta_uv}"
+        raise ProtocolError(msg)
+    return struct.pack(">H", OP_LIGHT_CTL_TEMPERATURE_SET) + struct.pack(
+        "<HhB", temperature, delta_uv, tid & 0xFF
+    )
+
+
 def light_hsl_set(lightness: int, hue: int, saturation: int, tid: int = 0) -> bytes:
     """Light HSL Set (opcode 0x8276). All three values are 0..0xFFFF."""
     _check_u16("lightness", lightness)
@@ -328,6 +344,9 @@ def describe_light_status(opcode: int, params: bytes) -> str | None:
         return (
             f"Light CTL Temperature Range Status: status={status} min={range_min}K max={range_max}K"
         )
+    if opcode == OP_LIGHT_CTL_TEMPERATURE_STATUS and len(params) >= 2:
+        (temperature,) = struct.unpack_from("<H", params)
+        return f"Light CTL Temperature Status: temperature={temperature}K"
     if opcode == OP_LIGHT_HSL_STATUS and len(params) >= 6:
         lightness, hue, saturation = struct.unpack_from("<HHH", params)
         return f"Light HSL Status: lightness={lightness} hue={hue} saturation={saturation}"

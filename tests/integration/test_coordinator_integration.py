@@ -373,6 +373,7 @@ class TestTaskCleanup:
     async def test_staleness_task_cancelled_on_stop(self) -> None:
         """Staleness watchdog task should be cancelled and cleaned up on async_stop."""
         mock_device = make_mock_device()
+        mock_device.get_seq = MagicMock(return_value=0)
         mock_hass = _make_mock_hass()
 
         # Create mock config entry with async_create_background_task
@@ -465,6 +466,7 @@ class TestTaskCleanup:
     async def test_no_untracked_tasks_remain_after_stop(self) -> None:
         """Verify no asyncio tasks are left running after coordinator stop."""
         mock_device = make_mock_device()
+        mock_device.get_seq = MagicMock(return_value=0)
         mock_hass = _make_mock_hass()
 
         mock_entry = MagicMock()

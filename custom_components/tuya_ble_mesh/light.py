@@ -759,8 +759,14 @@ class TuyaBLEMeshSIGLight(TuyaBLEMeshEntity, LightEntity):
                 )
                 lightness = sig_lightness_from_ha(brightness)
                 ctl_temp = sig_ctl_temp_from_ha(kelvin)
+                # This firmware ignores Light CTL Set on the primary element, so set
+                # lightness there and the temperature on the CTL Temperature element.
                 await self._send(
-                    lambda: device.send_light_ctl(lightness, ctl_temp), "send_light_ctl"
+                    lambda: device.send_light_lightness(lightness), "send_light_lightness"
+                )
+                await self._send(
+                    lambda: device.send_light_ctl_temperature(ctl_temp),
+                    "send_light_ctl_temperature",
                 )
                 self._attr_color_temp_kelvin = kelvin
                 self._attr_color_mode = ColorMode.COLOR_TEMP

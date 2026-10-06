@@ -13,7 +13,7 @@ from __future__ import annotations
 import struct
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -100,6 +100,12 @@ class TestLightMessages:
         payload = light_ctl_set(0x8000, 4000, 0, 1)
         assert payload == bytes.fromhex("825e") + struct.pack("<HHhB", 0x8000, 4000, 0, 1)
 
+    def test_ctl_temperature_set(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import light_ctl_temperature_set
+
+        payload = light_ctl_temperature_set(4000, 0, 2)
+        assert payload == bytes.fromhex("8264") + struct.pack("<HhB", 4000, 0, 2)
+
     def test_ctl_rejects_out_of_range_temperature(self) -> None:
         with pytest.raises(ProtocolError):
             light_ctl_set(0x8000, 500)
@@ -160,6 +166,7 @@ class TestDeviceLightCommands:
             ("request_onoff_state", ()),
             ("send_light_lightness", (0x8000,)),
             ("send_light_ctl", (0x8000, 3000)),
+            ("send_light_ctl_temperature", (3000,)),
             ("send_light_hsl", (0x4000, 0x1000, 0xFFFF)),
         ],
     )
@@ -339,7 +346,13 @@ def _make_light(models: frozenset[int]) -> tuple[TuyaBLEMeshSIGLight, MagicMock]
     coord.state = TuyaBLEMeshDeviceState(is_on=False, available=True)
     coord.device = MagicMock()
     coord.device.address = "AA:BB:CC:DD:EE:FF"
-    for name in ("send_power", "send_light_lightness", "send_light_ctl", "send_light_hsl"):
+    for name in (
+        "send_power",
+        "send_light_lightness",
+        "send_light_ctl",
+        "send_light_ctl_temperature",
+        "send_light_hsl",
+    ):
         setattr(coord.device, name, AsyncMock())
 
     async def _run(coro_func: object, **_kwargs: object) -> None:
@@ -378,9 +391,9 @@ class TestSIGLightEntity:
     async def test_color_temp_sends_ctl(self) -> None:
         light, coord = _make_light(_ALL_LIGHT_MODELS)
         await light.async_turn_on(color_temp_kelvin=3000, brightness=128)
-        coord.device.send_light_ctl.assert_awaited_once_with(
-            sig_lightness_from_ha(128), sig_ctl_temp_from_ha(3000)
-        )
+        coord.device.send_light_lightness.assert_awaited_once_with(sig_lightness_from_ha(128))
+        coord.device.send_light_ctl_temperature.assert_awaited_once_with(sig_ctl_temp_from_ha(3000))
+        coord.device.send_light_ctl.assert_not_awaited()
         assert light.color_temp_kelvin == 3000
         assert light.brightness == 128
 
@@ -487,3 +500,31 @@ class TestDescribeLightStatus:
         from tuya_ble_mesh.sig_mesh_protocol import light_state_gets
 
         assert light_state_gets() == [b"\x82\x4b", b"\x82\x5d", b"\x82\x62", b"\x82\x6d"]
+
+
+class TestCtlTemperatureElement:
+    def test_defaults_to_next_element(self) -> None:
+        dev = _make_device()
+        dev._composition = None
+        assert dev._ctl_temperature_element() == 0x00B1
+
+    def test_uses_element_from_composition(self) -> None:
+        dev = _make_device()
+        dev._composition = MagicMock()
+        dev._composition.elements = (
+            MagicMock(sig_models=(0x1000, 0x1303)),
+            MagicMock(sig_models=(0x1002,)),
+            MagicMock(sig_models=(0x1306,)),
+        )
+        assert dev._ctl_temperature_element() == 0x00B2
+
+    @pytest.mark.asyncio
+    async def test_send_targets_ctl_temperature_element(self) -> None:
+        dev = _make_device()
+        dev._composition = None
+        with patch(
+            "tuya_ble_mesh.sig_mesh_device_commands.encrypt_network_pdu",
+            return_value=b"\x00" * 20,
+        ) as enc:
+            await dev.send_light_ctl_temperature(3000)
+        assert enc.call_args.kwargs["dst"] == 0x00B1

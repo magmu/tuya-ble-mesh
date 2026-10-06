@@ -41,7 +41,8 @@ AnyMeshDevice = Union["MeshDevice", "SIGMeshDevice", "TelinkBridgeDevice", "SIGM
 _LOGGER = logging.getLogger(__name__)
 _MAX_CALLBACK_ERRORS = 3
 _SEQ_PERSIST_INTERVAL = 10
-_SEQ_SAFETY_MARGIN = 100
+_SEQ_SAFETY_MARGIN = 1000
+_SEQ_SAVE_DELAY = 5.0
 _SEQ_STORE_VERSION = 1
 _INITIAL_BACKOFF = 5.0  # backward-compat alias
 _DEBOUNCE_DELAY = 1.5  # PLAT-754: backward-compat alias for connection_manager.DEBOUNCE_DELAY
@@ -620,9 +621,12 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         base_delay: float | None = None,
         description: str = "command",
     ) -> None:
-        await self._conn_mgr.send_command_with_retry(
-            coro_func, max_retries=max_retries, base_delay=base_delay, description=description
-        )
+        try:
+            await self._conn_mgr.send_command_with_retry(
+                coro_func, max_retries=max_retries, base_delay=base_delay, description=description
+            )
+        finally:
+            self._schedule_seq_save()
 
     # --- Listeners ---
 
@@ -665,6 +669,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             self._state, available=True, firmware_version=self._device.firmware_version
         )
         self.start_rssi_polling()
+        self._schedule_seq_save()
         self._dispatch_update()
 
     def _handle_conn_state_update(self) -> None:
@@ -898,6 +903,20 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             self._device.set_seq(_SEQ_SAFETY_MARGIN)
             _LOGGER.info("No stored seq, starting at seq=%d", _SEQ_SAFETY_MARGIN)
 
+    def _seq_snapshot(self) -> dict[str, int]:
+        return {"seq": int(self._device.get_seq())}
+
+    def _schedule_seq_save(self) -> None:
+        """Debounced save of the current seq.
+
+        The Store writes the value as of save time, and flushes a pending save
+        when HA stops, so a restart never reuses sequence numbers the node has
+        already seen (it would drop them as replays).
+        """
+        if self._seq_store is None or not self.capabilities.has_sig_sequence:
+            return
+        self._seq_store.async_delay_save(self._seq_snapshot, _SEQ_SAVE_DELAY)
+
     async def _save_seq(self) -> None:
         if self._seq_store is None or not self.capabilities.has_sig_sequence:
             return
@@ -944,6 +963,8 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             self._device.address,
             response_time,
         )
+
+        self._schedule_seq_save()
 
         # Start staleness watchdog (PLAT-746, PLAT-747)
         if self._staleness_task is None or self._staleness_task.done():

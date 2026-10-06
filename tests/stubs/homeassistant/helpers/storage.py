@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 
@@ -17,3 +18,6 @@ class Store:
 
     async def async_save(self, data: Any) -> None:
         self._data = data
+
+    def async_delay_save(self, data_func: Callable[[], Any], delay: float = 0) -> None:
+        self._data = data_func()
