@@ -47,6 +47,7 @@ class _FakeComposition:
     vid: int = 0x0001
     crpl: int = 10
     features: int = 0
+    elements: tuple[object, ...] = ()
 
 
 class FakeSegmentDevice(SIGMeshDeviceSegmentsMixin):

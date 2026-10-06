@@ -409,6 +409,13 @@ class SIGMeshDeviceSegmentsMixin:
             comp.crpl,
             comp.features,
         )
+        for index, element in enumerate(comp.elements):
+            _LOGGER.info(
+                "Element %d models: SIG [%s] vendor [%s]",
+                index,
+                ", ".join(f"0x{model:04X}" for model in element.sig_models),
+                ", ".join(f"0x{cid:04X}:0x{mid:04X}" for cid, mid in element.vendor_models),
+            )
 
         for callback in list(self._composition_callbacks):
             try:
