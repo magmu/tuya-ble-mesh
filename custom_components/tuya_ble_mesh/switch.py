@@ -112,7 +112,7 @@ class TuyaBLEMeshSolarSwitch(SwitchEntity):
         self._set(False)
 
     def _set(self, value: bool) -> None:
-        self._coordinator.solar_powered = value
+        self._coordinator.set_solar_powered(value)
         self.hass.config_entries.async_update_entry(
             self._entry, options={**self._entry.options, CONF_SOLAR_POWERED: value}
         )
