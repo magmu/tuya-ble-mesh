@@ -122,6 +122,9 @@ class TuyaBLEMeshDeviceState:
 _SOLAR_DARK_ELEVATION = -6.0
 _TIMESTAMP_WAIT_SECONDS = 10.0
 _TIMESTAMP_POLL_SECONDS = 0.25
+# Calendar layout (variant 4) stopped a Classy Caps cap's time requests on
+# 2026-10-06, so it is tried first; the others remain as fallbacks.
+_TIMESTAMP_FIRST_VARIANT = 4
 
 
 def _is_daylight(hass: HomeAssistant) -> bool:
@@ -154,7 +157,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         self.capabilities = DeviceCapabilities.from_device(device)
         self._state = TuyaBLEMeshDeviceState()
         # Which candidate time-reply layout to try next (see codec)
-        self._timestamp_variant = 0
+        self._timestamp_variant = _TIMESTAMP_FIRST_VARIANT
         self._hass = hass
         self._entry_id = entry_id
         self._entry = entry
