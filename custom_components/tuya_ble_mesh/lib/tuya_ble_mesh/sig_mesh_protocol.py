@@ -100,6 +100,7 @@ from tuya_ble_mesh.sig_mesh_protocol_codec import (  # noqa: F401  — re-export
     config_appkey_add,
     config_composition_get,
     config_model_app_bind,
+    decode_tuya_dp_value,
     describe_light_status,
     format_status_response,
     generic_onoff_get,

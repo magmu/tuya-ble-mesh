@@ -114,6 +114,8 @@ class TuyaBLEMeshDeviceState:
     device_availability: str = DeviceAvailabilityState.UNKNOWN.value
     consecutive_write_failures: int = 0
     degraded_reason: str | None = None
+    # Latest value of every Tuya data point the device has reported, by DP id
+    tuya_dps: MappingProxyType[int, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 # Civil twilight: solar lights may still be dark-sensing until the sun is this low
@@ -814,6 +816,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             DP_ID_POWER_W,
             TUYA_CMD_TIMESTAMP_SYNC,
             TUYA_VENDOR_OPCODE,
+            decode_tuya_dp_value,
             parse_tuya_vendor_frame,
         )
 
@@ -824,6 +827,11 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             _LOGGER.info("Device requested timestamp sync — sending response")
             self._create_background_task(self._send_timestamp_response(), "timestamp_sync_response")
             return
+        if frame.dps:
+            dps = dict(self._state.tuya_dps)
+            for dp in frame.dps:
+                dps[dp.dp_id] = decode_tuya_dp_value(dp.dp_type, dp.value)
+            self._state = replace(self._state, tuya_dps=MappingProxyType(dps))
         power_w, energy_kwh, updated = self._state.power_w, self._state.energy_kwh, False
         for dp in frame.dps:
             if dp.dp_id == DP_ID_POWER_W and len(dp.value) >= 1:
@@ -858,6 +866,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
                 last_update_source=StateUpdateSource.NOTIFY.value,
                 last_update_time=now,
             )
+        if frame.dps:
             self._dispatch_update()
 
     async def _send_timestamp_response(self) -> None:

@@ -85,6 +85,7 @@ class TuyaBLEMeshSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[TuyaBLEMeshDeviceState], StateType]
     available_fn: Callable[[TuyaBLEMeshDeviceState], bool] | None = None
     requires_connection: bool = True
+    attrs_fn: Callable[[TuyaBLEMeshDeviceState], dict[str, Any]] | None = None
 
 
 SENSOR_DESCRIPTIONS: tuple[TuyaBLEMeshSensorEntityDescription, ...] = (
@@ -108,6 +109,19 @@ SENSOR_DESCRIPTIONS: tuple[TuyaBLEMeshSensorEntityDescription, ...] = (
         value_fn=lambda state: state.firmware_version,
         available_fn=lambda state: state.firmware_version is not None,
         requires_connection=False,
+    ),
+    TuyaBLEMeshSensorEntityDescription(
+        key="tuya_data_points",
+        translation_key="tuya_data_points",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,  # G3: diagnostics disabled by default
+        # Count of data points reported; each value is an attribute (dp_<id>)
+        value_fn=lambda state: len(state.tuya_dps) if state.tuya_dps else None,
+        available_fn=lambda state: bool(state.tuya_dps),
+        requires_connection=False,
+        attrs_fn=lambda state: {
+            f"dp_{dp_id}": value for dp_id, value in sorted(state.tuya_dps.items())
+        },
     ),
     TuyaBLEMeshSensorEntityDescription(
         key="power",
@@ -176,6 +190,11 @@ async def async_setup_entry(
         # Power/energy sensors require device support
         if description.key in ("power", "energy") and not getattr(
             coordinator.device, "supports_power_monitoring", False
+        ):
+            continue
+        # Tuya data points come over the SIG Mesh Tuya vendor model
+        if description.key == "tuya_data_points" and not hasattr(
+            coordinator.device, "request_tuya_dps"
         ):
             continue
 
@@ -261,6 +280,13 @@ class TuyaBLEMeshSensor(SensorEntity):
         property definitions across multiple sensor classes.
         """
         return self.entity_description.value_fn(self._coordinator.state)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return extra attributes from the description's attrs_fn, if any."""
+        if self.entity_description.attrs_fn is None:
+            return None
+        return self.entity_description.attrs_fn(self._coordinator.state)
 
     async def async_added_to_hass(self) -> None:
         """Register state listener when added to Home Assistant."""

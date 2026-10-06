@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace as dc_replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -59,8 +60,8 @@ class TestSensorDescriptions:
     """Test SENSOR_DESCRIPTIONS configuration."""
 
     def test_sensor_descriptions_count(self) -> None:
-        """Verify we have exactly 4 sensor descriptions."""
-        assert len(SENSOR_DESCRIPTIONS) == 6
+        """Verify we have exactly 7 sensor descriptions."""
+        assert len(SENSOR_DESCRIPTIONS) == 7
 
     def test_rssi_description(self) -> None:
         """Test RSSI sensor description."""
@@ -371,7 +372,7 @@ class TestSensorPlatformSetup:
 
         add_entities.assert_called_once()
         entities = add_entities.call_args[0][0]
-        assert len(entities) == 4
+        assert len(entities) == 5
         keys = {e.entity_description.key for e in entities}
         assert "rssi" in keys
         assert "firmware" in keys
@@ -396,7 +397,7 @@ class TestSensorPlatformSetup:
         await async_setup_entry(hass, entry, add_entities)
 
         entities = add_entities.call_args[0][0]
-        assert len(entities) == 6
+        assert len(entities) == 7
         keys = {e.entity_description.key for e in entities}
         assert "rssi" in keys
         assert "firmware" in keys
@@ -501,3 +502,25 @@ class TestDiagnosticSensorsDisabledByDefault:
                 assert desc.entity_registry_enabled_default is False, (
                     f"Sensor '{desc.key}' is DIAGNOSTIC but not disabled by default"
                 )
+
+
+class TestTuyaDataPointsSensor:
+    """Diagnostic sensor listing every Tuya DP."""
+
+    def test_count_and_attributes(self) -> None:
+        from types import MappingProxyType
+
+        coord = make_mock_coordinator(available=False)
+        coord.state = dc_replace(coord.state, tuya_dps=MappingProxyType({102: True, 101: 87}))
+        desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "tuya_data_points")
+        sensor = TuyaBLEMeshSensor(coord, "entry1", desc)
+        assert sensor.available is True
+        assert sensor.native_value == 2
+        assert sensor.extra_state_attributes == {"dp_101": 87, "dp_102": True}
+
+    def test_unavailable_until_reported(self) -> None:
+        coord = make_mock_coordinator()
+        desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "tuya_data_points")
+        sensor = TuyaBLEMeshSensor(coord, "entry1", desc)
+        assert sensor.available is False
+        assert sensor.native_value is None
