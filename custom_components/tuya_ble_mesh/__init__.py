@@ -147,7 +147,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
     from homeassistant.helpers import device_registry as dr
 
     dev_reg = dr.async_get(hass)
-    known_device = dev_reg.async_get_device(identifiers={(DOMAIN, mac_address)})
+    known_device = _entry_device(dev_reg, entry.entry_id, mac_address)
     stored_firmware = getattr(known_device, "sw_version", None)
     if not isinstance(stored_firmware, str):
         stored_firmware = None
@@ -234,7 +234,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
         version = coordinator.state.firmware_version
         if version is None:
             return
-        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, mac_address)})
+        device_entry = _entry_device(dev_reg, entry.entry_id, mac_address)
         if device_entry is not None and device_entry.sw_version != version:
             dev_reg.async_update_device(device_entry.id, sw_version=version)
 
@@ -274,6 +274,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
     # PLAT-759: Routine setup completion at DEBUG level
     _LOGGER.debug("Tuya BLE Mesh entry set up: %s", entry.title)
     return True
+
+
+def _entry_device(dev_reg: Any, entry_id: str, mac_address: str) -> Any:
+    """Return this entry's HA device for the MAC, or None.
+
+    Looks within the config entry, since identifiers alone are no longer unique
+    across entries (``async_get_device`` is deprecated from HA 2026.9).
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    for device in dr.async_entries_for_config_entry(dev_reg, entry_id):
+        if (DOMAIN, mac_address) in device.identifiers:
+            return device
+    return None
 
 
 def _device_absent(hass: HomeAssistant, address: str) -> bool:

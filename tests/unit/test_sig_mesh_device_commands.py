@@ -229,6 +229,22 @@ class TestSendVendorCommand:
         await dev.send_vendor_command(b"\xcd\xd0\x07\x01")
         assert dev.get_seq() == seq_before + 1
 
+    @pytest.mark.asyncio
+    async def test_long_payload_is_segmented(self) -> None:
+        """The 13-byte timestamp sync reply exceeds 11 bytes, so it goes segmented."""
+        from tuya_ble_mesh.sig_mesh_protocol import tuya_vendor_timestamp_response
+
+        dev = _make_device()
+        seq_before = dev.get_seq()
+        payload = tuya_vendor_timestamp_response()
+        assert len(payload) > 11
+        with patch("tuya_ble_mesh.sig_mesh_device_commands.asyncio.sleep", AsyncMock()):
+            await dev.send_vendor_command(payload)
+
+        # 13 bytes + 4-byte MIC = 17 bytes -> two 12-byte segments
+        assert dev._client.write_gatt_char.call_count == 2
+        assert dev.get_seq() == seq_before + 2
+
 
 # ---------------------------------------------------------------------------
 # send_config_appkey_add
@@ -482,3 +498,33 @@ class TestSendConfigModelAppBind:
         result = await dev.send_config_model_app_bind(0x0001, 0, 0x1000, response_timeout=1.0)
 
         assert result is False
+
+
+class TestRequestTuyaDps:
+    """Tuya DP query after connect."""
+
+    @pytest.mark.asyncio
+    async def test_query_payload(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import tuya_vendor_dp_query
+
+        assert tuya_vendor_dp_query() == b"\xcc\xd0\x07\x01\x00"
+
+    @pytest.mark.asyncio
+    async def test_sends_when_vendor_model_present(self) -> None:
+        dev = _make_device()
+        dev._composition = MagicMock()
+        element = MagicMock()
+        element.vendor_models = ((0x07D0, 0x0004),)
+        dev._composition.elements = (element,)
+        await dev.request_tuya_dps()
+        dev._client.write_gatt_char.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_without_tuya_vendor_model(self) -> None:
+        dev = _make_device()
+        dev._composition = MagicMock()
+        element = MagicMock()
+        element.vendor_models = ()
+        dev._composition.elements = (element,)
+        await dev.request_tuya_dps()
+        dev._client.write_gatt_char.assert_not_called()

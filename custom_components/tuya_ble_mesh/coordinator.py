@@ -1011,6 +1011,8 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
 
         self._schedule_seq_save()
         self._ensure_staleness_watchdog()
+        # Repairs raised before a restart are stale once the device connects
+        self._conn_mgr._clear_repair_issues_on_recovery()
         self._dispatch_update()
 
     async def async_start_waiting(self) -> None:

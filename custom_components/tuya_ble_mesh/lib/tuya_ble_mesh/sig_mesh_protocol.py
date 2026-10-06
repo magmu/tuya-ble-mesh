@@ -86,7 +86,9 @@ from tuya_ble_mesh.sig_mesh_protocol_codec import (  # noqa: F401  — re-export
     SEG_DATA_SIZE,
     TUYA_CMD_DP_DATA,
     TUYA_CMD_TIMESTAMP_SYNC,
+    TUYA_VENDOR_CID,
     TUYA_VENDOR_OPCODE,
+    TUYA_VENDOR_READ,
     TUYA_VENDOR_WRITE_ACK,
     TUYA_VENDOR_WRITE_UNACK,
     CompositionData,
@@ -115,6 +117,7 @@ from tuya_ble_mesh.sig_mesh_protocol_codec import (  # noqa: F401  — re-export
     parse_segment_header,
     parse_tuya_vendor_dps,
     parse_tuya_vendor_frame,
+    tuya_vendor_dp_query,
     tuya_vendor_timestamp_response,
 )
 
