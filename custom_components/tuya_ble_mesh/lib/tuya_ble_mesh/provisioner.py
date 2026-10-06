@@ -25,12 +25,14 @@ from bleak import BleakClient
 
 from tuya_ble_mesh.const import (
     PAIR_OPCODE_FAILURE,
+    PAIR_OPCODE_SET_LTK,
     PAIR_OPCODE_SET_NAME,
     PAIR_OPCODE_SET_OK,
     PAIR_OPCODE_SET_PASS,
     PAIR_OPCODE_SUCCESS,
     TELINK_CHAR_PAIRING,
     TELINK_CHAR_STATUS,
+    TELINK_DEFAULT_LTK,
 )
 from tuya_ble_mesh.crypto import (
     encrypt_mesh_credential,
@@ -45,6 +47,9 @@ _LOGGER = logging.getLogger(__name__)
 
 # Timeout for individual GATT read/write operations during provisioning
 _GATT_TIMEOUT = 10.0
+
+# Pause after writing the long-term key before reading SET_OK
+_LTK_SETTLE_SECONDS = 1.0
 
 
 async def pair(
@@ -192,6 +197,26 @@ async def set_mesh_credentials(
     )
     confirm = parse_pair_response(confirm_data)
     _LOGGER.debug("Credential confirmation opcode: 0x%02X", confirm.opcode)
+
+    if confirm.opcode == PAIR_OPCODE_SET_LTK:
+        # Some Tuya lights wait for the long-term key before answering SET_OK,
+        # as the Smart Life app sends it (0x04, 0x05, 0x06, then read).
+        _LOGGER.debug("Device asked for the long-term key, writing SET_LTK (0x06)")
+        enc_ltk = encrypt_mesh_credential(session_key, TELINK_DEFAULT_LTK)
+        await asyncio.wait_for(
+            client.write_gatt_char(
+                TELINK_CHAR_PAIRING, bytes([PAIR_OPCODE_SET_LTK]) + enc_ltk, response=True
+            ),
+            timeout=_GATT_TIMEOUT,
+        )
+        await asyncio.sleep(_LTK_SETTLE_SECONDS)
+        confirm_data = bytes(
+            await asyncio.wait_for(
+                client.read_gatt_char(TELINK_CHAR_PAIRING), timeout=_GATT_TIMEOUT
+            )
+        )
+        confirm = parse_pair_response(confirm_data)
+        _LOGGER.debug("Confirmation after LTK, opcode: 0x%02X", confirm.opcode)
 
     if confirm.opcode != PAIR_OPCODE_SET_OK:
         msg = f"Credential set failed, expected SET_OK (0x07), got 0x{confirm.opcode:02X}"

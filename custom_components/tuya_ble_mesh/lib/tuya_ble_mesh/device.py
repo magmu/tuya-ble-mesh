@@ -31,6 +31,7 @@ from tuya_ble_mesh.const import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_STATUS_WAIT_TIMEOUT,
     TELINK_VENDOR_ID,
+    TUYA_LIGHT_VENDOR_ID,
 )
 from tuya_ble_mesh.device_commands import DeviceCommandsMixin
 from tuya_ble_mesh.device_dispatcher import (
@@ -234,6 +235,17 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
         except (CryptoError, MalformedPacketError):
             _LOGGER.warning("Failed to decode notification (%d bytes)", len(data), exc_info=True)
             return
+
+        if status is None:
+            _LOGGER.debug("Notification is not a status packet, ignored")
+            return
+
+        if status.vendor_id == TUYA_LIGHT_VENDOR_ID and self._vendor_id != TUYA_LIGHT_VENDOR_ID:
+            # The lamp tells us its vendor in every status; Tuya 0x0102 lights
+            # ignore the 0x1001 power command, so follow what the device uses.
+            _LOGGER.info("%s reports vendor 0x0102, using it for commands", self._address)
+            self._vendor_id = TUYA_LIGHT_VENDOR_ID
+            self._conn.vendor_id = TUYA_LIGHT_VENDOR_ID
 
         _LOGGER.debug(
             "Status: mode=%d bright=%d temp=%d",

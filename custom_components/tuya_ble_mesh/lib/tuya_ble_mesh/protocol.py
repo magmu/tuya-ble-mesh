@@ -20,6 +20,7 @@ from tuya_ble_mesh.const import (
     DP_TYPE_STRING,
     DP_TYPE_VALUE,
     PAIR_OPCODE_FAILURE,
+    PAIR_OPCODE_SET_LTK,
     PAIR_OPCODE_SET_OK,
     PAIR_OPCODE_SUCCESS,
     STATUS_OFFSET_BLUE,
@@ -30,7 +31,16 @@ from tuya_ble_mesh.const import (
     STATUS_OFFSET_RED,
     STATUS_OFFSET_WHITE_BRIGHTNESS,
     STATUS_OFFSET_WHITE_TEMP,
+    TELINK_STATUS_OPCODE_OFFSET,
+    TELINK_STATUS_RESPONSE,
+    TELINK_STATUS_VENDOR_OFFSET,
     TELINK_VENDOR_ID,
+    TUYA_LIGHT_E2_MASK_BRIGHTNESS,
+    TUYA_LIGHT_E2_MASK_WHITE,
+    TUYA_LIGHT_E2_PREFIX,
+    TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS,
+    TUYA_LIGHT_STATUS_OFFSET_COLD,
+    TUYA_LIGHT_VENDOR_ID,
 )
 from tuya_ble_mesh.crypto import crypt_payload, make_checksum, verify_checksum
 from tuya_ble_mesh.exceptions import MalformedPacketError, ProtocolError
@@ -46,6 +56,9 @@ MAX_PARAM_LEN = PAYLOAD_SIZE - 2 - 1 - len(TELINK_VENDOR_ID)  # 10
 
 # Status notifications require at least up to the blue offset
 _STATUS_MIN_SIZE = STATUS_OFFSET_BLUE + 1
+
+# The integration's white temperature scale (light.py DEVICE_COLOR_TEMP_MAX)
+TUYA_LIGHT_TEMP_MAX = 127
 
 # Pair response sizes
 _PAIR_RESPONSE_MIN_SIZE = 1
@@ -87,6 +100,10 @@ class StatusResponse:
     red: int
     green: int
     blue: int
+    # False when the packet has no on/off field (Tuya 0x0102 lights)
+    power_known: bool = True
+    # Vendor bytes the device used in this packet (empty if not read)
+    vendor_id: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -367,18 +384,22 @@ def decrypt_notification(
 # --- Status parsing ---
 
 
-def decode_status(data: bytes) -> StatusResponse:
+def decode_status(data: bytes) -> StatusResponse | None:
     """Parse a decrypted status notification.
 
     Applies the STATUS_OFFSET_* constants from const.py to extract
-    light state fields from the full notification buffer.
+    light state fields from the full notification buffer. Packets that
+    carry the Tuya light vendor bytes (02 01) use that lamp's layout:
+    only 0xDB is a status, with the cold channel, warm channel and
+    brightness percent at bytes 13-15 and no on/off field.
 
     Args:
         data: Full notification data with payload decrypted in place.
               Must be at least 19 bytes (up to blue at offset 18).
 
     Returns:
-        Parsed status fields.
+        Parsed status fields, or None for a Tuya light packet that is not
+        a status (e.g. 0xDC).
 
     Raises:
         MalformedPacketError: If data is too short.
@@ -386,6 +407,24 @@ def decode_status(data: bytes) -> StatusResponse:
     if len(data) < _STATUS_MIN_SIZE:
         msg = f"Status data too short: {len(data)} < {_STATUS_MIN_SIZE}"
         raise MalformedPacketError(msg)
+
+    vendor = bytes(data[TELINK_STATUS_VENDOR_OFFSET : TELINK_STATUS_VENDOR_OFFSET + 2])
+    if vendor == TUYA_LIGHT_VENDOR_ID:
+        if data[TELINK_STATUS_OPCODE_OFFSET] != TELINK_STATUS_RESPONSE:
+            return None
+        cold = data[TUYA_LIGHT_STATUS_OFFSET_COLD]
+        return StatusResponse(
+            mesh_id=data[STATUS_OFFSET_MESH_ID],
+            mode=0,
+            white_brightness=data[TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS],
+            white_temp=round(cold * TUYA_LIGHT_TEMP_MAX / 0xFF),
+            color_brightness=0,
+            red=0,
+            green=0,
+            blue=0,
+            power_known=False,
+            vendor_id=vendor,
+        )
 
     return StatusResponse(
         mesh_id=data[STATUS_OFFSET_MESH_ID],
@@ -396,7 +435,49 @@ def decode_status(data: bytes) -> StatusResponse:
         red=data[STATUS_OFFSET_RED],
         green=data[STATUS_OFFSET_GREEN],
         blue=data[STATUS_OFFSET_BLUE],
+        vendor_id=vendor,
     )
+
+
+def encode_tuya_light_brightness(level: int) -> bytes:
+    """Build 0xE2 params that set a Tuya 0x0102 light's brightness.
+
+    Args:
+        level: Brightness percent (1-100).
+
+    Returns:
+        9-byte parameter block.
+
+    Raises:
+        ProtocolError: If level is out of range.
+    """
+    if not 1 <= level <= 100:
+        msg = f"Brightness must be 1..100, got {level}"
+        raise ProtocolError(msg)
+    return bytes(TUYA_LIGHT_E2_PREFIX) + bytes([0, 0, level, 0, TUYA_LIGHT_E2_MASK_BRIGHTNESS])
+
+
+def encode_tuya_light_white(temp: int) -> bytes:
+    """Build 0xE2 params that set a Tuya 0x0102 light's white balance.
+
+    The lamp mixes a warm and a cold channel that add up to 255.
+
+    Args:
+        temp: Color temperature on the integration's scale
+            (0 = warmest, TUYA_LIGHT_TEMP_MAX = coolest).
+
+    Returns:
+        9-byte parameter block.
+
+    Raises:
+        ProtocolError: If temp is out of range.
+    """
+    if not 0 <= temp <= TUYA_LIGHT_TEMP_MAX:
+        msg = f"Color temp must be 0..{TUYA_LIGHT_TEMP_MAX}, got {temp}"
+        raise ProtocolError(msg)
+    cold = round(temp * 0xFF / TUYA_LIGHT_TEMP_MAX)
+    warm = 0xFF - cold
+    return bytes(TUYA_LIGHT_E2_PREFIX) + bytes([warm, cold, 0, 0, TUYA_LIGHT_E2_MASK_WHITE])
 
 
 # --- Pair response parsing ---
@@ -408,6 +489,7 @@ def parse_pair_response(data: bytes) -> PairResponse:
     Response opcodes:
     - 0x0D + 8B device_random = pairing success
     - 0x0E = authentication failure
+    - 0x06 = device asks for the long-term key
     - 0x07 = credential set acknowledged
 
     Args:
@@ -434,7 +516,7 @@ def parse_pair_response(data: bytes) -> PairResponse:
     if opcode == PAIR_OPCODE_FAILURE:
         return PairResponse(opcode=opcode, device_random=b"")
 
-    if opcode == PAIR_OPCODE_SET_OK:
+    if opcode in (PAIR_OPCODE_SET_OK, PAIR_OPCODE_SET_LTK):
         return PairResponse(opcode=opcode, device_random=b"")
 
     msg = f"Unknown pair opcode: 0x{opcode:02X}"

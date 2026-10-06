@@ -7,7 +7,6 @@ Handles:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +49,7 @@ async def perform_telink_pairing(
     mesh_password: str,
     detected_type: str,
 ) -> dict[str, Any]:
-    """Perform Telink mesh pairing and verification.
+    """Perform Telink mesh pairing.
 
     Args:
         client: Connected BLE client.
@@ -63,7 +62,7 @@ async def perform_telink_pairing(
         Extra data dict (empty for Telink devices, keys added later).
 
     Raises:
-        ValueError: If pairing or verification fails.
+        ValueError: If pairing fails.
     """
     # Verify Telink GATT service
     services = client.services
@@ -93,62 +92,10 @@ async def perform_telink_pairing(
             raise ValueError("pairing_failed") from None
         raise ValueError("pairing_failed") from exc
 
-    # PLAT-740 QC BRIST 2: Verify — send status query and VALIDATE RESPONSE
-    _LOGGER.info("Verifying Telink device %s with status query (0xDA)", mac)
-    from tuya_ble_mesh.const import TELINK_CHAR_COMMAND, TELINK_CHAR_STATUS, TELINK_CMD_STATUS_QUERY
-    from tuya_ble_mesh.protocol import encode_command_packet
-
-    # Build status query command (0xE0)
-    status_query = encode_command_packet(
-        TELINK_CMD_STATUS_QUERY,
-        b"\x10",  # Status query param
-        session_key,
-        0,  # sequence (first command after pairing)
-        0,  # mesh_id (default)
-        mac_to_bytes(mac),
-    )
-
-    _LOGGER.debug(
-        "VERIFY TX [%s] → 0xE0 status query: [%dB]",
-        mac,
-        len(status_query) if isinstance(status_query, (bytes, bytearray)) else 0,
-    )
-
-    # Subscribe to notifications BEFORE sending command
-    response_received = asyncio.Event()
-    response_data: list[bytes] = []
-
-    def notification_handler(sender: Any, data: bytes) -> None:
-        """Capture response from device."""
-        _LOGGER.debug("VERIFY RX [%s] ← notification: [%dB]", mac, len(data))
-        response_data.append(data)
-        response_received.set()
-
-    await client.start_notify(TELINK_CHAR_STATUS, notification_handler)
-
-    try:
-        # Send command
-        await client.write_gatt_char(TELINK_CHAR_COMMAND, status_query, response=True)
-        _LOGGER.info("Status query (0xE0) sent to %s, waiting for response...", mac)
-
-        # Wait up to 5 seconds for response
-        try:
-            await asyncio.wait_for(response_received.wait(), timeout=5.0)
-            if response_data:
-                _LOGGER.info(
-                    "Device %s responded to verify command — device verified ([%dB])",
-                    mac,
-                    len(response_data[0]),
-                )
-            else:
-                _LOGGER.warning("Device %s: response event set but no data captured", mac)
-                raise ValueError("verify_failed")
-        except TimeoutError:
-            _LOGGER.warning("Device %s did not respond to verify command within 5s", mac)
-            raise ValueError("verify_failed") from None
-    finally:
-        await client.stop_notify(TELINK_CHAR_STATUS)
-
+    # No separate verify step: a successful pair handshake already proves the
+    # mesh name and password. start_notify on char 1911 blocks until the BlueZ
+    # timeout on Telink devices (the runtime path handles that in
+    # _start_notify_safe), so a notify-based check here hung the flow.
     return {}
 
 

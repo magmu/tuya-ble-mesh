@@ -108,6 +108,26 @@ TELINK_CMD_STATUS_QUERY = 0xDA  # Status query (param 0x10)
 # App sends vendor bytes 01 10 (LE uint16: 0x1001), NOT 60 01 (0x0160).
 TELINK_VENDOR_ID = bytes([0x01, 0x10])
 
+# Tuya white-label Telink lights (e.g. Smart Life "WC Bulb", product bXun1QKL)
+# use vendor bytes 02 01 (LE uint16: 0x0102), confirmed from a Smart Life HCI
+# capture. They switch with 0xD0, set brightness and white balance with 0xE2,
+# and answer status queries with 0xDB.
+TUYA_LIGHT_VENDOR_ID: bytes = bytes([0x02, 0x01])
+TELINK_STATUS_OPCODE_OFFSET = 7
+TELINK_STATUS_VENDOR_OFFSET = 8
+TELINK_STATUS_RESPONSE = 0xDB
+TUYA_LIGHT_STATUS_OFFSET_COLD = 13
+TUYA_LIGHT_STATUS_OFFSET_WARM = 14
+TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS = 15
+# 0xE2 parameter layouts from the capture: 09 00 00 00 <warm> <cold> <bright> 00 <mask>
+TUYA_LIGHT_E2_PREFIX: bytes = bytes([0x09, 0x00, 0x00, 0x00])
+TUYA_LIGHT_E2_MASK_BRIGHTNESS = 0x04
+TUYA_LIGHT_E2_MASK_WHITE = 0x18
+
+# Default Telink long-term key, sent when a device asks for one (pair opcode 0x06)
+# after SET_NAME and SET_PASS. Public protocol default, not a secret.
+TELINK_DEFAULT_LTK: bytes = bytes(range(0xC0, 0xD0))
+
 # --- Telink Mesh Status Offsets ---
 # Byte offsets within a decrypted status notification from char 1911.
 STATUS_OFFSET_MESH_ID = 3

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.13] — 2026-10-06 (magmu fork)
+
+### Fixed
+- Telink pairing: send the long-term key when the light answers `0x06` after SET_NAME/SET_PASS
+- Telink setup no longer hangs on `start_notify` after a successful pair
+- Light extra state attributes crashed (`self._coordinator`)
+- Dropped BLE links are detected via the disconnect callback and `BleakError` on write; `start_notify` is skipped after it has failed once
+- Back-to-back commands are spaced 0.4 s apart so the light applies each one
+
+### Added
+- Tuya white-label Telink lights (vendor `0x0102`, e.g. Smart Life "WC Bulb"): power `0xD0`, brightness and white `0xE2`, status from `0xDB`; vendor picked up from the light's status
+
 ---
 
 ## [0.42.10] — 2026-10-06 (magmu fork)

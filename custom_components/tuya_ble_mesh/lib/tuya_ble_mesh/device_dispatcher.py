@@ -29,6 +29,9 @@ _LOGGER = logging.getLogger(__name__)
 _QUEUE_MAX_SIZE = 32
 _COMMAND_TTL = 60.0  # seconds
 _QUEUE_POLL_INTERVAL = 1.0  # seconds between queue.get() polls (allows checking _running)
+# Minimum gap between two sends. Lamps drop commands that arrive back to back
+# (brightness + color temp from one turn_on went out 3 ms apart and neither applied).
+_COMMAND_SPACING = 0.4  # seconds
 
 
 class _QueuedCommand:
@@ -82,6 +85,7 @@ class _CommandDispatcher:
         self._queue: asyncio.Queue[_QueuedCommand] = asyncio.Queue(maxsize=max_size)
         self._worker_task: asyncio.Task[None] | None = None
         self._running = False
+        self._last_send: float | None = None
 
     def start(self) -> None:
         """Start the dispatcher worker task."""
@@ -184,8 +188,15 @@ class _CommandDispatcher:
                     self._queue.task_done()
                     break
 
+                # Space commands out so the device applies each one
+                if self._last_send is not None:
+                    wait = _COMMAND_SPACING - (time.monotonic() - self._last_send)
+                    if wait > 0:
+                        await asyncio.sleep(wait)
+
                 # Send the command
                 try:
+                    self._last_send = time.monotonic()
                     await self._device._send_now(cmd.opcode, cmd.params, cmd.dest_id)
                 except (MeshConnectionError, DisconnectedError):
                     _LOGGER.warning(

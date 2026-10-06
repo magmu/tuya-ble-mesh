@@ -369,7 +369,7 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
             Dict with brightness_mode ('rgb' or 'white') and device_brightness
             (raw device brightness value: 0-255 for RGB, 1-100 for white mode).
         """
-        state = self._coordinator.state
+        state = self.coordinator.state
         if state.mode == 1:
             return {
                 "brightness_mode": "rgb",
@@ -480,8 +480,8 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
                         "Set brightness: HA %d -> device %d", brightness, device_brightness
                     )
 
-            if not has_target:
-                await device.send_power(True)
+            if not has_target or (self._no_power_status and not self.coordinator.state.is_on):
+                await self._send_power(True)
 
     def _cancel_pending_command(self) -> None:
         """Cancel any pending debounced command task."""
@@ -511,7 +511,18 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
             self._transition_task.add_done_callback(_log_task_exc)
             return
 
-        await self.coordinator.device.send_power(False)
+        await self._send_power(False)
+
+    @property
+    def _no_power_status(self) -> bool:
+        """Return True when the device's status packets carry no on/off field."""
+        return getattr(self.coordinator.device, "is_tuya_light", False) is True
+
+    async def _send_power(self, on: bool) -> None:
+        """Send a power command, tracking the state for lamps that never report it."""
+        await self.coordinator.device.send_power(on)
+        if self._no_power_status:
+            self.coordinator.assume_state({"is_on": on}, {"is_on": on})
 
     def _cancel_transition(self) -> None:
         """Cancel any in-progress transition task."""
@@ -584,7 +595,6 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
             target_rgb: Target RGB color tuple, or None.
         """
         async with self._transition_lock:
-            device = self.coordinator.device
             state = self.coordinator.state
 
             steps = min(int(duration * 10), 50)
@@ -614,7 +624,7 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
                     await asyncio.sleep(interval)
 
             if power_off_after:
-                await device.send_power(False)
+                await self._send_power(False)
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel in-progress transitions and pending commands when removed from HA."""

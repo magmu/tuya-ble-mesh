@@ -53,6 +53,9 @@ _JITTER_FACTOR = 0.2  # 0-20% random jitter
 _CONNECT_RETRY_BACKOFF_MULTIPLIER = 2.0
 _CONNECT_RETRY_MAX_BACKOFF = 8.0
 
+# start_notify can block until the BlueZ timeout on Telink devices
+_START_NOTIFY_TIMEOUT = 10.0
+
 # Max connection retries per attempt
 _DEFAULT_MAX_RETRIES = 5
 
@@ -129,6 +132,11 @@ class BLEConnection:
         self._notification_handler: Callable[..., Any] | None = None
         # True if start_notify succeeded; False = poll-only mode
         self._notify_active: bool = False
+        # Set once start_notify has failed: BlueZ often drops the link after a
+        # failed start_notify, so later connects skip it. Pairing already
+        # enables status notifications by writing 0x01 to char 1911.
+        self._notify_unsupported: bool = False
+        self._disconnect_task: asyncio.Task[None] | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -158,6 +166,20 @@ class BLEConnection:
         if self._session_key is None:
             return None
         return bytes(self._session_key)
+
+    @property
+    def vendor_id(self) -> bytes:
+        """Return the vendor bytes used in keep-alive packets.
+
+        Returns:
+            bytes: 2-byte vendor identifier.
+        """
+        return self._vendor_id
+
+    @vendor_id.setter
+    def vendor_id(self, value: bytes) -> None:
+        """Set the vendor bytes used in keep-alive packets."""
+        self._vendor_id = value
 
     @property
     def is_ready(self) -> bool:
@@ -243,16 +265,23 @@ class BLEConnection:
         """
         if self._client is None or self._notification_handler is None:
             return False
+        if self._notify_unsupported:
+            _LOGGER.debug("Skipping start_notify for %s (failed before)", self._address)
+            return False
 
         try:
-            await self._client.start_notify(TELINK_CHAR_STATUS, self._notification_handler)
+            await asyncio.wait_for(
+                self._client.start_notify(TELINK_CHAR_STATUS, self._notification_handler),
+                timeout=_START_NOTIFY_TIMEOUT,
+            )
             self._notify_active = True
             _LOGGER.info(
                 "GATT notification subscription active for %s (push mode)",
                 self._address,
             )
-        except (BleakError, OSError, EOFError) as exc:
+        except (BleakError, OSError, EOFError, TimeoutError) as exc:
             self._notify_active = False
+            self._notify_unsupported = True
             _LOGGER.warning(
                 "start_notify failed for %s (%s) — running in poll-only mode. "
                 "Status updates arrive via keep-alive queries only.",
@@ -359,6 +388,7 @@ class BLEConnection:
                     BleakClient,
                     ble_device,
                     self._address,
+                    disconnected_callback=self._on_ble_disconnected,
                     max_attempts=3,
                 )
                 _LOGGER.info(
@@ -460,7 +490,7 @@ class BLEConnection:
 
         try:
             await self._client.write_gatt_char(TELINK_CHAR_COMMAND, packet, response=False)
-        except OSError as exc:
+        except (OSError, BleakError) as exc:
             _LOGGER.warning("Write failed, triggering disconnect: %s", type(exc).__name__)
             await self._handle_disconnect()
             msg = f"Write failed to {self._address}"
@@ -469,10 +499,21 @@ class BLEConnection:
         # Reset keep-alive timer on successful write
         await self._restart_keep_alive()  # CF-3: Now awaited
 
+    def _on_ble_disconnected(self, _client: BleakClient) -> None:
+        """Handle the link dropping under us (bleak disconnected_callback).
+
+        Only a READY link needs handling: our own disconnect and a failed
+        connect clean up themselves.
+        """
+        if self._state != ConnectionState.READY:
+            return
+        _LOGGER.debug("BLE link to %s dropped", self._address)
+        self._disconnect_task = asyncio.get_running_loop().create_task(self._handle_disconnect())
+
     async def _handle_disconnect(self) -> None:
         """Handle an unexpected disconnect."""
-        if self._state == ConnectionState.DISCONNECTING:
-            return  # Already disconnecting
+        if self._state in (ConnectionState.DISCONNECTING, ConnectionState.DISCONNECTED):
+            return  # Already disconnecting or handled
 
         _LOGGER.warning("Disconnect detected for %s", self._address)
         await self._cleanup()
@@ -548,7 +589,7 @@ class BLEConnection:
             )
             await self._client.write_gatt_char(TELINK_CHAR_COMMAND, packet, response=False)
             _LOGGER.debug("Keep-alive sent (seq=%d)", seq)
-        except OSError:
+        except (OSError, BleakError):
             _LOGGER.warning("Keep-alive failed, triggering disconnect")
             await self._handle_disconnect()
 
