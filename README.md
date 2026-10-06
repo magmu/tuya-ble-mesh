@@ -1,13 +1,15 @@
 # Tuya BLE Mesh for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?logo=homeassistantcommunitystore)](https://github.com/hacs/integration)
-[![CI](https://github.com/11z4t/tuya-ble-mesh/actions/workflows/ci.yml/badge.svg)](https://github.com/11z4t/tuya-ble-mesh/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.35.0-blue.svg)](CHANGELOG.md)
+[![CI](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml/badge.svg)](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.42.10-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HA 2024.1+](https://img.shields.io/badge/HA-2024.1%2B-blue.svg)](https://www.home-assistant.io)
-[![Tests](https://img.shields.io/badge/tests-1922%20passing-brightgreen.svg)](https://github.com/11z4t/tuya-ble-mesh/actions)
+[![Tests](https://img.shields.io/badge/tests-2300%20passing-brightgreen.svg)](https://github.com/magmu/tuya-ble-mesh/actions)
 
 A fully local Home Assistant integration for controlling Tuya BLE Mesh devices. No cloud. No Tuya account required for daily use.
+
+> **This is a fork of [11z4t/tuya-ble-mesh](https://github.com/11z4t/tuya-ble-mesh)** that adds SIG Mesh **lights** over an ESPHome Bluetooth proxy, with the Classy Caps Lumineer solar post cap as the tested device. See [Changes in this fork](#changes-in-this-fork).
 
 ## What is this?
 
@@ -41,6 +43,7 @@ In both modes, Home Assistant itself doesn't need Bluetooth hardware.
 |--------|-------|------|--------|
 | LED Driver 9952126 | Malmbergs | Dimmable LED driver | ✅ Tested — on/off, brightness |
 | Smart Plug S17 | Malmbergs | BLE Mesh relay plug | ✅ Tested — on/off, SIG Mesh provisioned |
+| Lumineer solar post cap | Classy Caps | SIG Mesh light (Telink, CID `07D0`, PID `0300`) | ✅ Tested (this fork) — on/off, brightness, white temperature, colour, firmware, signal strength, solar sleep handling |
 
 ### Potentially Compatible
 
@@ -51,6 +54,31 @@ Devices using the Tuya BLE Mesh / Telink stack with service UUID `fe07`:
 | **AwoX** | Mesh lights | `0x0160` | Protocol compatible, untested |
 | **Malmbergs** | LED drivers, plugs | `0x1001` | Hardware tested |
 | **Dimond/retsimx** | Mesh lights | `0x0211` | Protocol compatible, untested |
+
+## Changes in this fork
+
+Everything below was added for SIG Mesh lights reached through an ESPHome Bluetooth proxy, and tested on Classy Caps Lumineer solar post caps.
+
+**SIG Mesh lights**
+- Light Lightness, CTL and HSL control for SIG Mesh lights over direct BLE (`sig_light` device type).
+- White temperature uses Lightness Set plus CTL Temperature Set on the CTL Temperature element, because some lights answer CTL Get but drop CTL Set. The light's full reported range (800–20000 K on the post cap) is used.
+- On/off and light state are read back after every connect, so HA matches the light after a restart without power cycling it.
+- Sequence numbers are saved after every command, so restarts no longer replay old ones.
+
+**Sleeping solar lights**
+- A per-device **Solar powered** switch (configuration). When it is on, the light is expected to be offline from civil dawn to dusk (sun above −6°, from HA's own sun data): no warnings and no repairs while it sleeps.
+- Reconnects pause while a device isn't advertising and resume as soon as it is seen again. If a solar light is still missing after dark, a device-not-found repair is raised.
+
+**Status and diagnostics**
+- The firmware version (`CID:07D0 PID:0300 VID:3235` style) stays visible while the device is offline.
+- Signal strength is read from the latest advertisement.
+- Diagnostics list every element's SIG and vendor models (the device's composition).
+- A **Tuya data points** diagnostic sensor (disabled by default) shows every data point a device reports over the Tuya vendor model. It is only refreshed when the device reports, never polled.
+- Tuya time sync: when a device asks for the time, the integration replies (calendar layout first, other layouts as fallbacks), waiting until the connection is ready.
+- A quiet but reachable device is logged at debug level instead of a warning every 5 minutes.
+
+**Project**
+- CI runs and passes on the fork (ruff, mypy, pytest, hassfest, HACS), and a version bump in `manifest.json` on `main` publishes a release automatically, so HACS offers proper updates.
 
 ## Features
 
@@ -154,6 +182,8 @@ Each device creates:
 | `switch.<name>` | Switch | Power on/off (plugs only) |
 | `sensor.<name>_signal` | Sensor | BLE signal strength (RSSI) |
 | `sensor.<name>_firmware` | Sensor | Device firmware version |
+| `switch.<name>_solar_powered` | Switch (config) | Expect the light offline in daylight (SIG lights) |
+| `sensor.<name>_tuya_data_points` | Sensor (diagnostic, disabled by default) | Count of reported Tuya data points; each one as a `dp_<id>` attribute |
 
 ## Hardware Setup
 
@@ -253,6 +283,7 @@ All checks must pass before committing — enforced by `run-checks.sh`.
 |------|-------------|-----------------|-------|
 | Telink mesh protocol | ✅ Unit tests | 1 device (LED Driver 9952126) | on/off, brightness confirmed |
 | SIG Mesh provisioning | ✅ Unit tests | 1 device (Smart Plug S17) | on/off confirmed |
+| SIG Mesh lights via ESPHome proxy | ✅ Unit tests | 2 devices (Classy Caps post caps) | on/off, brightness, CTL, HSL, restart sync, solar sleep |
 | SIG Mesh segmentation | ✅ Unit tests | Limited | SAR fragmentation tested in CI |
 | HA integration layer | ✅ 1922 tests | 2 devices | Config flow, coordinator, entities |
 | HA Bluetooth API | ✅ Unit tests | Indirect | HaBleakClientWrapper integration |
@@ -283,6 +314,14 @@ All checks must pass before committing — enforced by `run-checks.sh`.
 
 **Solution:** Move device closer, try factory reset.
 
+### Solar Light Offline During the Day
+
+**Symptom:** A solar light (such as a Classy Caps post cap) shows unavailable or raises connection repairs in daylight.
+
+**Cause:** Solar lights stop advertising while the sun is up.
+
+**Solution:** Turn on the device's **Solar powered** switch. The integration then expects it offline from dawn to dusk and reconnects as soon as it advertises again.
+
 ### Device Shows Unavailable After HA Restart
 
 **Symptom:** Entity shows unavailable after HA restart
@@ -294,7 +333,8 @@ All checks must pass before committing — enforced by `run-checks.sh`.
 ## Known Limitations
 
 - **Bridge required** — HA cannot talk BLE mesh directly; the RPi bridge daemon must be running (for Telink devices)
-- **Limited device testing** — only 2 Malmbergs devices tested; other brands are protocol-compatible but untested
+- **Limited device testing** — 2 Malmbergs devices and the Classy Caps post cap tested; other brands are protocol-compatible but untested
+- **No battery data on Classy Caps post caps** — they have no Generic Battery model and send no Tuya data points, even when asked to report everything, so battery level and charging state can't be shown
 - **Factory reset** — some devices need 5x rapid power cycling to enter provisioning mode
 - **No OTA** — firmware updates are out of scope
 - **SIG Mesh Proxy SAR** — only COMPLETE PDUs supported; FIRST/CONTINUE/LAST fragmentation not implemented
