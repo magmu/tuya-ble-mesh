@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.42.12] — 2026-10-06 (magmu fork)
+
+### Changed
+- README and install guides: one-click "Open in HACS" button; install, clone, issue and docs links point at this fork
+- Home Assistant's "Report issue" link (manifest `issue_tracker`) opens this fork's issues
+
+## [0.42.11] — 2026-10-06 (magmu fork)
+
+### Changed
+- README documents the Classy Caps post cap and the changes in this fork; manifest documentation link points at this fork
+
 ## [0.42.10] — 2026-10-06 (magmu fork)
 
 Fork releases up to 0.42.10 add SIG Mesh lights over an ESPHome Bluetooth

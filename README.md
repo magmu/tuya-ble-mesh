@@ -5,7 +5,7 @@
 [![Version](https://img.shields.io/badge/version-0.42.13-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HA 2024.1+](https://img.shields.io/badge/HA-2024.1%2B-blue.svg)](https://www.home-assistant.io)
-[![Tests](https://img.shields.io/badge/tests-2300%20passing-brightgreen.svg)](https://github.com/magmu/tuya-ble-mesh/actions)
+[![Tests](https://img.shields.io/badge/tests-2322%20passing-brightgreen.svg)](https://github.com/magmu/tuya-ble-mesh/actions)
 
 A fully local Home Assistant integration for controlling Tuya BLE Mesh devices. No cloud. No Tuya account required for daily use.
 
@@ -184,8 +184,9 @@ Different brands embed different vendor IDs in the Telink mesh protocol:
 | AwoX | `0x0160` |
 | Malmbergs | `0x1001` |
 | Dimond/retsimx | `0x0211` |
+| Tuya white-label lights (Smart Life "WC Bulb") | keep `0x1001`, recognised as `0x0102` automatically |
 
-If commands don't work with the default, try `0x0160` (AwoX) or `0x0211` (Dimond).
+If commands don't work with the default, try `0x0160` (AwoX) or `0x0211` (Dimond). Tuya white-label lights that report vendor `0x0102` in their status are switched to their own commands automatically, so leave the default in setup.
 
 ## Entities
 

@@ -150,6 +150,7 @@ Different brands use different vendor IDs:
 | Malmbergs BT Smart | `0x1001` (default) |
 | AwoX | `0x0160` |
 | Dimond/retsimx | `0x0211` |
+| Tuya white-label lights (Smart Life "WC Bulb") | keep `0x1001` (detected as `0x0102` from the light's status) |
 
 If the default doesn't work, try the vendor ID for your brand.
 

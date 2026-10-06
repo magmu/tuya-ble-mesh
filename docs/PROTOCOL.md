@@ -350,9 +350,29 @@ in every command packet. The vendor ID is stored little-endian on the wire.
 | **Malmbergs BT Smart** | `0x1001` | `01 10` | **Confirmed working** |
 | AwoX / Eglo | `0x0160` | `60 01` | Only 0xE3 reset confirmed |
 | Dimond / retsimx | `0x0211` | `11 02` | Not working |
+| Tuya white label ("WC Bulb", bXun1QKL) | `0x0102` | `02 01` | Fixed from a user's tested patch (v0.42.13) |
 
 The vendor ID is now configurable via `MeshDevice(vendor_id=...)` and in the
 HA config flow. Default is `0x1001` (Malmbergs).
+
+### Tuya 0x0102 lights (v0.42.13)
+
+These lights carry vendor bytes `02 01` in their status packets, and the
+integration switches to their commands when it sees them:
+
+| Action | Opcode | Vendor | Params |
+|--------|--------|--------|--------|
+| On / off | `0xD0` | `0x0102` | `01` / `00` (DP 121 is ignored) |
+| Brightness | `0xD2` | `0x1001` | DP 122, 1–100 % |
+| White balance | `0xD2` | `0x1001` | DP 123, 4-byte value; only the second-lowest byte is read: `0x0100` full warm, `0xFF00` full cold (`0` is ignored) |
+
+Status arrives as opcode `0xDB` at byte 7, then `02 01`; byte 13 is the cold
+channel, byte 14 warm (they add up to 255), byte 15 brightness in percent. There
+is no on/off field, and `0xDC` packets are not status. Pairing: after SET_NAME
+(`0x04`) and SET_PASS (`0x05`) these lights answer `0x06` until the long-term key
+is written (`0x06` + encrypted LTK), then `0x07` SET_OK. The Smart Life app also
+sends power, brightness and white with `0xE2` and vendor `0x0102`; those are not
+used because they were not tested from HA.
 
 ---
 
