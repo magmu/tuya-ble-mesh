@@ -33,6 +33,42 @@ jobs:
       - name: Unit, security and integration tests
         run: pytest tests/unit tests/security tests/integration -q
 
+  # Security scanners from scripts/run-checks.sh: bandit (risky code patterns),
+  # pip-audit (known vulnerabilities in runtime requirements) and detect-secrets.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install scanners
+        run: pip install bandit==1.9.4 pip-audit==2.10.1 detect-secrets==1.5.0
+
+      - name: bandit
+        run: bandit -r custom_components/tuya_ble_mesh -c pyproject.toml -q
+
+      - name: pip-audit (manifest requirements)
+        run: |
+          python -c "import json; print('\n'.join(json.load(open('custom_components/tuya_ble_mesh/manifest.json'))['requirements']))" > /tmp/requirements.txt
+          pip-audit -r /tmp/requirements.txt
+
+      - name: detect-secrets
+        run: |
+          detect-secrets scan \
+            --exclude-files '(\.git/.*|strings\.json|translations/.*\.json|tests/.*\.py|\.github/.*\.sh)' \
+            . > /tmp/secrets.json
+          python - <<'PY'
+          import json
+          results = {k: v for k, v in json.load(open("/tmp/secrets.json"))["results"].items() if v}
+          for path, found in results.items():
+              for item in found:
+                  print(f"{path}:{item['line_number']} {item['type']}")
+          raise SystemExit(1 if results else 0)
+          PY
+
   lint:
     runs-on: ubuntu-latest
     steps:
