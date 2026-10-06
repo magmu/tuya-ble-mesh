@@ -132,6 +132,20 @@ class TestStatusUpdate:
         assert coord.state.is_on is True
         assert coord.state.available is True
 
+    def test_status_without_power_field_keeps_power_state(self) -> None:
+        device = make_mock_device()
+        coord = TuyaBLEMeshCoordinator(device)
+        status = make_mock_status(white_brightness=80)
+        status.power_known = False
+
+        coord._on_status_update(status)
+        assert coord.state.is_on is False
+        assert coord.state.brightness == 80
+
+        coord.assume_state({"is_on": True}, {"is_on": True})
+        coord._on_status_update(status)
+        assert coord.state.is_on is True
+
     def test_off_when_brightness_zero(self) -> None:
         device = make_mock_device()
         coord = TuyaBLEMeshCoordinator(device)

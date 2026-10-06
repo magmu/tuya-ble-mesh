@@ -31,7 +31,7 @@ from custom_components.tuya_ble_mesh.coordinator import (  # noqa: E402
 )
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Iterator
 
 
 @pytest.fixture
@@ -209,3 +209,13 @@ def plug_device_type(request: pytest.FixtureRequest) -> str:
 def any_device_type(request: pytest.FixtureRequest) -> str:
     """Parametrize across all device types."""
     return request.param
+
+
+@pytest.fixture(autouse=True)
+def _reset_start_notify_skips() -> Iterator[None]:
+    """Forget start_notify failures so they don't leak between tests."""
+    from tuya_ble_mesh import connection
+
+    connection._SKIP_START_NOTIFY.clear()
+    yield
+    connection._SKIP_START_NOTIFY.clear()

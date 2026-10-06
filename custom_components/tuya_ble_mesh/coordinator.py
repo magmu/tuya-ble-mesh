@@ -790,7 +790,12 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             or self._state.blue != status.blue
             or self._state.color_brightness != status.color_brightness
         )
-        is_on = status.white_brightness > 0 or status.color_brightness > 0
+        if status.power_known:
+            is_on = status.white_brightness > 0 or status.color_brightness > 0
+        else:
+            # The status has no on/off field (Tuya 0x0102 lights), so keep the
+            # last known power state instead of deriving it from brightness.
+            is_on = self._state.is_on
         confirmed = MappingProxyType(
             {
                 "is_on": is_on,

@@ -30,7 +30,9 @@ from tuya_ble_mesh.const import (
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_MAX_RETRIES,
     DEFAULT_STATUS_WAIT_TIMEOUT,
+    TELINK_CMD_POWER,
     TELINK_VENDOR_ID,
+    TUYA_LIGHT_VENDOR_ID,
 )
 from tuya_ble_mesh.device_commands import DeviceCommandsMixin
 from tuya_ble_mesh.device_dispatcher import (
@@ -105,6 +107,7 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
         self._address = address.upper()
         self._mesh_id = mesh_id
         self._vendor_id = vendor_id
+        self._tuya_light = vendor_id == TUYA_LIGHT_VENDOR_ID
         self._mac_bytes = mac_to_bytes(address)
         self._conn = BLEConnection(
             address,
@@ -235,6 +238,16 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
             _LOGGER.warning("Failed to decode notification (%d bytes)", len(data), exc_info=True)
             return
 
+        if status is None:
+            _LOGGER.debug("Notification is not a status packet, ignored")
+            return
+
+        if status.vendor_id == TUYA_LIGHT_VENDOR_ID and not self._tuya_light:
+            # The lamp names its vendor in every status. Tuya 0x0102 lights ignore
+            # the DP 121 power command, so switch to their commands.
+            _LOGGER.info("%s reports vendor 0x0102, using Tuya light commands", self._address)
+            self._tuya_light = True
+
         _LOGGER.debug(
             "Status: mode=%d bright=%d temp=%d",
             status.mode,
@@ -350,7 +363,7 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
                 dest_id,
                 opcode,
                 params,
-                vendor_id=self._vendor_id,
+                vendor_id=self._command_vendor(opcode),
             )
 
             _LOGGER.debug(
@@ -387,6 +400,16 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
             raise last_error
         msg = f"Command 0x{opcode:02X} failed after {max_retries} attempts"
         raise MeshConnectionError(msg)
+
+    def _command_vendor(self, opcode: int) -> bytes:
+        """Return the vendor bytes to send an opcode with.
+
+        Tuya 0x0102 lights switch only with 0xD0 sent with vendor 0x0102, and
+        take their compact DPs with vendor 0x1001 (as tested from HA).
+        """
+        if not self._tuya_light:
+            return bytes(self._vendor_id)
+        return bytes(TUYA_LIGHT_VENDOR_ID if opcode == TELINK_CMD_POWER else TELINK_VENDOR_ID)
 
     # --- High-level commands (0xD2 compact DP format) ---
 

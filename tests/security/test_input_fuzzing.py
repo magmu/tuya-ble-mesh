@@ -96,6 +96,8 @@ class TestFuzzDecodeStatus:
             data = os.urandom(20)
             # 20 bytes is always enough - should never raise
             status = decode_status(data)
+            if status is None:  # Tuya 0x0102 light packet that is not a status
+                continue
             assert 0 <= status.mesh_id <= 255
             assert 0 <= status.red <= 255
 

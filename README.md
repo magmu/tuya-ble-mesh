@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?logo=homeassistantcommunitystore)](https://github.com/hacs/integration)
 [![CI](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml/badge.svg)](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.42.12-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.42.13-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HA 2024.1+](https://img.shields.io/badge/HA-2024.1%2B-blue.svg)](https://www.home-assistant.io)
 [![Tests](https://img.shields.io/badge/tests-2300%20passing-brightgreen.svg)](https://github.com/magmu/tuya-ble-mesh/actions)
@@ -43,6 +43,7 @@ In both modes, Home Assistant itself doesn't need Bluetooth hardware.
 |--------|-------|------|--------|
 | LED Driver 9952126 | Malmbergs | Dimmable LED driver | ✅ Tested — on/off, brightness |
 | Smart Plug S17 | Malmbergs | BLE Mesh relay plug | ✅ Tested — on/off, SIG Mesh provisioned |
+| WC Bulb ceiling light | Tuya white label (product `bXun1QKL`, MAC `BC:23:4C`) | Telink mesh light, vendor `0x0102` | 🧪 Fixed in this fork from a user's tested patch — on/off, brightness, white temperature; please report results |
 | Lumineer solar post cap | Classy Caps | SIG Mesh light (Telink, CID `07D0`, PID `0300`) | ✅ Tested (this fork) — on/off, brightness, white temperature, colour, firmware, signal strength, solar sleep handling |
 
 ### Potentially Compatible
@@ -76,6 +77,14 @@ Everything below was added for SIG Mesh lights reached through an ESPHome Blueto
 - A **Tuya data points** diagnostic sensor (disabled by default) shows every data point a device reports over the Tuya vendor model. It is only refreshed when the device reports, never polled.
 - Tuya time sync: when a device asks for the time, the integration replies (calendar layout first, other layouts as fallbacks), waiting until the connection is ready.
 - A quiet but reachable device is logged at debug level instead of a warning every 5 minutes.
+
+**Telink lights (Tuya white label, vendor 0x0102)**
+- Pairing finishes on lights that ask for the long-term key (pair reply `0x06`) by sending it, as the Smart Life app does.
+- The Telink setup step no longer hangs after a successful pair (it no longer subscribes to notifications to verify).
+- Lights whose status reports vendor `0x0102` switch with `0xD0` (sent with vendor `0x0102`), set white balance with compact DP 123, and read status from `0xDB` packets; brightness stays DP 122. This is the command set the reporter tested from HA. The light is recognised from its own status, so setup can keep the default vendor. These lights report no on/off state and only report every 30 s, so HA shows the last values it sent until the next report.
+- Commands are spaced at least 0.4 s apart, so a brightness and a white change from one action both apply.
+- A dropped BLE link is detected (disconnect callback and write errors). `start_notify` is not retried for a device after it has failed once (also across reloads), and a link that dies during notification setup is reported as a failed connect instead of "ready".
+- Fixed a crash in the light's extra state attributes.
 
 **Project**
 - CI runs and passes on the fork (ruff, mypy, pytest, hassfest, HACS), and a version bump in `manifest.json` on `main` publishes a release automatically, so HACS offers proper updates.

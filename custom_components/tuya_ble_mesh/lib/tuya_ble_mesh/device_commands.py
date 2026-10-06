@@ -1,7 +1,8 @@
 """High-level command methods for BLE mesh device.
 
 Provides convenient wrappers for common Telink BLE mesh commands:
-- Power on/off (0xD2 compact DP)
+- Power on/off (0xD2 compact DP, or 0xD0 on Tuya 0x0102 lights)
+- White temperature (0xF0, or compact DP 123 on Tuya 0x0102 lights)
 - Brightness control (white and color modes)
 - Color temperature and RGB color
 - Light mode switching
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from tuya_ble_mesh.const import (
     COMPACT_DP_BRIGHTNESS,
+    COMPACT_DP_COLOR_TEMP,
     COMPACT_DP_POWER,
     DP_TYPE_VALUE,
     TELINK_CMD_COLOR,
@@ -23,6 +25,7 @@ from tuya_ble_mesh.const import (
     TELINK_CMD_LIGHT_MODE,
     TELINK_CMD_MESH_ADDRESS,
     TELINK_CMD_MESH_RESET,
+    TELINK_CMD_POWER,
     TELINK_CMD_WHITE_TEMP,
 )
 from tuya_ble_mesh.exceptions import ProtocolError
@@ -33,26 +36,41 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# The integration's white temperature scale (light.py DEVICE_COLOR_TEMP_MAX)
+_TUYA_LIGHT_TEMP_MAX = 127
+
 
 class DeviceCommandsMixin:
     """Mixin providing high-level command methods for MeshDevice.
 
     This mixin must be used with a class that provides:
     - self._address: str - BLE MAC address
+    - self._tuya_light: bool - True for Tuya white-label lights (vendor 0x0102)
     - self.send_command(opcode: int, params: bytes) -> Awaitable[None]
     """
 
     _address: str
+    _tuya_light: bool
     send_command: Callable[[int, bytes], Awaitable[None]]
+
+    @property
+    def is_tuya_light(self) -> bool:
+        """Return True for Tuya white-label lights (vendor 0x0102)."""
+        return bool(self._tuya_light)
 
     async def send_power(self, on: bool) -> None:
         """Turn the device on or off.
 
-        Uses 0xD2 compact DP with dp_id 121 (confirmed from HCI snoop).
+        Uses 0xD2 compact DP with dp_id 121 (confirmed from HCI snoop),
+        or 0xD0 on Tuya 0x0102 lights, which ignore DP 121.
 
         Args:
             on: True to turn on, False to turn off.
         """
+        if self.is_tuya_light:
+            await self.send_command(TELINK_CMD_POWER, b"\x01" if on else b"\x00")
+            _LOGGER.info("Power %s sent to %s", "ON" if on else "OFF", self._address)
+            return
         params = encode_compact_dp(COMPACT_DP_POWER, DP_TYPE_VALUE, 1 if on else 0)
         await self.send_command(TELINK_CMD_DP_WRITE, params)
         _LOGGER.info("Power %s sent to %s", "ON" if on else "OFF", self._address)
@@ -87,6 +105,14 @@ class DeviceCommandsMixin:
         if not 0 <= temp <= 0xFF:
             msg = f"Color temp must be 0..255, got {temp}"
             raise ProtocolError(msg)
+        if self.is_tuya_light:
+            # 0 (warm) to 127 (cold) on the integration's scale, sent in the
+            # second-lowest byte. The lamp drops 0, and 0x0100 is already full warm.
+            level = max(1, round(min(temp, _TUYA_LIGHT_TEMP_MAX) * 0xFF / _TUYA_LIGHT_TEMP_MAX))
+            params = encode_compact_dp(COMPACT_DP_COLOR_TEMP, DP_TYPE_VALUE, level << 8)
+            await self.send_command(TELINK_CMD_DP_WRITE, params)
+            _LOGGER.info("Color temp %d (DP 123 level %d) sent to %s", temp, level, self._address)
+            return
         await self.send_command(TELINK_CMD_WHITE_TEMP, bytes([temp]))
         _LOGGER.info("Color temp %d sent to %s", temp, self._address)
 

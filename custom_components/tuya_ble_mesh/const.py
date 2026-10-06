@@ -106,4 +106,5 @@ KNOWN_VENDOR_IDS: dict[str, str] = {
     "1002": "Malmbergs",
     "1003": "Tuya",
     "1004": "Telink",
+    "0102": "Tuya",
 }

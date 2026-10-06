@@ -108,6 +108,23 @@ TELINK_CMD_STATUS_QUERY = 0xDA  # Status query (param 0x10)
 # App sends vendor bytes 01 10 (LE uint16: 0x1001), NOT 60 01 (0x0160).
 TELINK_VENDOR_ID = bytes([0x01, 0x10])
 
+# Tuya white-label Telink lights (e.g. Smart Life "WC Bulb", product bXun1QKL)
+# report vendor bytes 02 01 (LE uint16: 0x0102) in their status. Tested from HA
+# by a user: they ignore DP 121 and switch only with 0xD0 sent with vendor 0x0102;
+# brightness (DP 122) and white (DP 123) work with vendor 0x1001. Status comes
+# as 0xDB packets.
+TUYA_LIGHT_VENDOR_ID: bytes = bytes([0x02, 0x01])
+TELINK_STATUS_OPCODE_OFFSET = 7
+TELINK_STATUS_VENDOR_OFFSET = 8
+TELINK_STATUS_RESPONSE = 0xDB
+TUYA_LIGHT_STATUS_OFFSET_COLD = 13
+TUYA_LIGHT_STATUS_OFFSET_WARM = 14
+TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS = 15
+
+# Default Telink long-term key, sent when a device asks for one (pair opcode 0x06)
+# after SET_NAME and SET_PASS. Public protocol default, not a secret.
+TELINK_DEFAULT_LTK: bytes = bytes(range(0xC0, 0xD0))
+
 # --- Telink Mesh Status Offsets ---
 # Byte offsets within a decrypted status notification from char 1911.
 STATUS_OFFSET_MESH_ID = 3
@@ -203,6 +220,9 @@ TUYA_VENDOR_MODEL_ID = 0x07D00004
 # These are the dp_id values used in 0xD2 compact DP format.
 COMPACT_DP_POWER = 121  # Power on/off (dp_type=value, 0=OFF 1=ON)
 COMPACT_DP_BRIGHTNESS = 122  # Brightness 1-100% (dp_type=value)
+# White balance on Tuya 0x0102 lights (4-byte value; only the second-lowest byte
+# is read: 0x0100 full warm, 0xFF00 full cold; 0 is ignored)
+COMPACT_DP_COLOR_TEMP = 123
 
 TUYA_MESH_DEFAULT_NAME = "out_of_mesh"
 TUYA_MESH_DEFAULT_PASSWORD = "123456"  # nosec B105 — documented public default
