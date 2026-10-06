@@ -542,7 +542,9 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
                 time_since_update = now - last_update
 
                 if time_since_update > _STALENESS_THRESHOLD_SECONDS:
-                    _LOGGER.warning(
+                    # Lights only report on change, so a quiet device is normal;
+                    # only a failed probe below is worth a warning.
+                    _LOGGER.debug(
                         "Device %s is stale (%.1fs since last update, threshold: %.1fs)",
                         self._device.address,
                         time_since_update,
@@ -565,7 +567,9 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
                         )
                         self._dispatch_update()
                     else:
-                        _LOGGER.info("Device %s probe succeeded, still alive", self._device.address)
+                        _LOGGER.debug(
+                            "Device %s probe succeeded, still alive", self._device.address
+                        )
 
             except asyncio.CancelledError:
                 _LOGGER.debug("Staleness watchdog cancelled for %s", self._device.address)
