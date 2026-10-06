@@ -69,6 +69,33 @@ OP_GENERIC_ONOFF_GET = 0x8201
 OP_GENERIC_ONOFF_SET = 0x8202
 OP_GENERIC_ONOFF_STATUS = 0x8204
 
+# --- Light model opcodes (Mesh Model 6.3) ---
+OP_LIGHT_LIGHTNESS_SET = 0x824C
+OP_LIGHT_LIGHTNESS_STATUS = 0x824E
+OP_LIGHT_CTL_SET = 0x825E
+OP_LIGHT_CTL_STATUS = 0x8260
+OP_LIGHT_HSL_SET = 0x8276
+OP_LIGHT_HSL_STATUS = 0x8278
+
+# --- SIG model IDs (Mesh Model 7.3) ---
+MODEL_CONFIG_SERVER = 0x0000
+MODEL_CONFIG_CLIENT = 0x0001
+MODEL_HEALTH_SERVER = 0x0002
+MODEL_HEALTH_CLIENT = 0x0003
+MODEL_GENERIC_ONOFF_SERVER = 0x1000
+MODEL_LIGHT_LIGHTNESS_SERVER = 0x1300
+MODEL_LIGHT_CTL_SERVER = 0x1303
+MODEL_LIGHT_HSL_SERVER = 0x1307
+
+# Foundation models use the device key and must never be bound to an AppKey
+FOUNDATION_MODELS = frozenset(
+    {MODEL_CONFIG_SERVER, MODEL_CONFIG_CLIENT, MODEL_HEALTH_SERVER, MODEL_HEALTH_CLIENT}
+)
+
+# Light CTL Temperature range allowed by the spec (kelvin)
+LIGHT_CTL_TEMP_MIN = 800
+LIGHT_CTL_TEMP_MAX = 20000
+
 # --- Tuya Vendor Model (CID 0x07D0) ---
 TUYA_VENDOR_OPCODE = 0xCDD007
 TUYA_VENDOR_WRITE_ACK = 0xC9D007
@@ -188,8 +215,14 @@ def config_appkey_add(net_idx: int, app_idx: int, app_key: bytes) -> bytes:
     return bytes([OP_CONFIG_APPKEY_ADD]) + struct.pack("<I", idx)[:3] + app_key
 
 
-def config_model_app_bind(element_addr: int, app_idx: int, model_id: int) -> bytes:
-    """Config Model App Bind (opcode 0x803D). SIG Model IDs only (16-bit)."""
+def config_model_app_bind(
+    element_addr: int, app_idx: int, model_id: int, company_id: int | None = None
+) -> bytes:
+    """Config Model App Bind (opcode 0x803D).
+
+    SIG models use a 16-bit model ID. Vendor models pass ``company_id`` and
+    are encoded as company ID followed by model ID (both little-endian).
+    """
     if not 0 <= element_addr <= 0xFFFF:
         msg = f"element_addr must be 0..0xFFFF, got {element_addr}"
         raise ProtocolError(msg)
@@ -199,9 +232,13 @@ def config_model_app_bind(element_addr: int, app_idx: int, model_id: int) -> byt
     if not 0 <= model_id <= 0xFFFF:
         msg = f"model_id must be 0..0xFFFF, got {model_id}"
         raise ProtocolError(msg)
-    return struct.pack(">H", OP_CONFIG_MODEL_APP_BIND) + struct.pack(
-        "<HHH", element_addr, app_idx, model_id
-    )
+    header = struct.pack(">H", OP_CONFIG_MODEL_APP_BIND)
+    if company_id is None:
+        return header + struct.pack("<HHH", element_addr, app_idx, model_id)
+    if not 0 <= company_id <= 0xFFFF:
+        msg = f"company_id must be 0..0xFFFF, got {company_id}"
+        raise ProtocolError(msg)
+    return header + struct.pack("<HHHH", element_addr, app_idx, company_id, model_id)
 
 
 # ============================================================
@@ -217,6 +254,47 @@ def generic_onoff_set(on: bool, tid: int = 0) -> bytes:
 def generic_onoff_get() -> bytes:
     """Generic OnOff Get (opcode 0x8201)."""
     return struct.pack(">H", OP_GENERIC_ONOFF_GET)
+
+
+# ============================================================
+# Light Model Messages (Mesh Model 6.3)
+# ============================================================
+
+
+def _check_u16(name: str, value: int) -> None:
+    if not 0 <= value <= 0xFFFF:
+        msg = f"{name} must be 0..0xFFFF, got {value}"
+        raise ProtocolError(msg)
+
+
+def light_lightness_set(lightness: int, tid: int = 0) -> bytes:
+    """Light Lightness Set (opcode 0x824C). Lightness is 0..0xFFFF."""
+    _check_u16("lightness", lightness)
+    return struct.pack(">H", OP_LIGHT_LIGHTNESS_SET) + struct.pack("<HB", lightness, tid & 0xFF)
+
+
+def light_ctl_set(lightness: int, temperature: int, delta_uv: int = 0, tid: int = 0) -> bytes:
+    """Light CTL Set (opcode 0x825E). Temperature is kelvin, 800..20000."""
+    _check_u16("lightness", lightness)
+    if not LIGHT_CTL_TEMP_MIN <= temperature <= LIGHT_CTL_TEMP_MAX:
+        msg = f"temperature must be {LIGHT_CTL_TEMP_MIN}..{LIGHT_CTL_TEMP_MAX}, got {temperature}"
+        raise ProtocolError(msg)
+    if not -0x8000 <= delta_uv <= 0x7FFF:
+        msg = f"delta_uv must be a signed 16-bit value, got {delta_uv}"
+        raise ProtocolError(msg)
+    return struct.pack(">H", OP_LIGHT_CTL_SET) + struct.pack(
+        "<HHhB", lightness, temperature, delta_uv, tid & 0xFF
+    )
+
+
+def light_hsl_set(lightness: int, hue: int, saturation: int, tid: int = 0) -> bytes:
+    """Light HSL Set (opcode 0x8276). All three values are 0..0xFFFF."""
+    _check_u16("lightness", lightness)
+    _check_u16("hue", hue)
+    _check_u16("saturation", saturation)
+    return struct.pack(">H", OP_LIGHT_HSL_SET) + struct.pack(
+        "<HHHB", lightness, hue, saturation, tid & 0xFF
+    )
 
 
 # ============================================================
@@ -343,6 +421,15 @@ def _parse_dp_bytes(data: bytes) -> list[TuyaVendorDP]:
 
 
 @dataclass(frozen=True)
+class CompositionElement:
+    """One element from Composition Data Page 0."""
+
+    location: int
+    sig_models: tuple[int, ...]
+    vendor_models: tuple[tuple[int, int], ...]  # (company_id, model_id)
+
+
+@dataclass(frozen=True)
 class CompositionData:
     """Parsed Composition Data Page 0 header."""
 
@@ -352,6 +439,47 @@ class CompositionData:
     crpl: int  # Replay protection list size
     features: int  # Features bitmask
     raw_elements: bytes  # Unparsed element data
+
+    @property
+    def elements(self) -> tuple[CompositionElement, ...]:
+        """Element list parsed from ``raw_elements``."""
+        return parse_composition_elements(self.raw_elements)
+
+    @property
+    def sig_models(self) -> frozenset[int]:
+        """All SIG model IDs across every element."""
+        return frozenset(m for el in self.elements for m in el.sig_models)
+
+
+def parse_composition_elements(raw: bytes) -> tuple[CompositionElement, ...]:
+    """Parse the element list of Composition Data Page 0 (Mesh Profile 4.2.1.1).
+
+    Each element is Loc(2) NumS(1) NumV(1), then NumS 16-bit SIG model IDs
+    and NumV vendor model IDs (company ID + model ID, 16 bits each).
+
+    Raises:
+        MalformedPacketError: If an element runs past the end of the data.
+    """
+    elements: list[CompositionElement] = []
+    offset = 0
+    while offset < len(raw):
+        if offset + 4 > len(raw):
+            msg = f"Element header truncated at offset {offset}"
+            raise MalformedPacketError(msg)
+        location = struct.unpack_from("<H", raw, offset)[0]
+        num_s = raw[offset + 2]
+        num_v = raw[offset + 3]
+        offset += 4
+        end = offset + 2 * num_s + 4 * num_v
+        if end > len(raw):
+            msg = f"Element model list truncated at offset {offset}"
+            raise MalformedPacketError(msg)
+        sig = struct.unpack_from(f"<{num_s}H", raw, offset)
+        offset += 2 * num_s
+        vendor = tuple(struct.unpack_from("<HH", raw, offset + 4 * i) for i in range(num_v))
+        offset = end
+        elements.append(CompositionElement(location, tuple(sig), vendor))
+    return tuple(elements)
 
 
 def parse_composition_data(params: bytes) -> CompositionData:

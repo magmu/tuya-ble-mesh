@@ -15,21 +15,27 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
+    ATTR_HS_COLOR,
     ATTR_RGB_COLOR,
     ATTR_TRANSITION,
     ColorMode,
     LightEntity,
     LightEntityFeature,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from custom_components.tuya_ble_mesh.const import (
     CONF_DEVICE_TYPE,
+    CONF_SIG_MODELS,
     DEVICE_BRIGHTNESS_MAX,
     DEVICE_BRIGHTNESS_MIN,
     DEVICE_COLOR_TEMP_MAX,
     DEVICE_COLOR_TEMP_MIN,
+    DEVICE_TYPE_SIG_LIGHT,
+    DOMAIN,
     HA_BRIGHTNESS_MAX,
     HA_BRIGHTNESS_MIN,
     HA_MIRED_MAX,
@@ -256,6 +262,12 @@ async def async_setup_entry(
     runtime_data = entry.runtime_data
     coordinator: TuyaBLEMeshCoordinator = runtime_data.coordinator
     device_info: DeviceInfo = runtime_data.device_info
+    if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_SIG_LIGHT:
+        sig_models = frozenset(entry.data.get(CONF_SIG_MODELS, []))
+        async_add_entities(
+            [TuyaBLEMeshSIGLight(coordinator, entry.entry_id, device_info, sig_models)]
+        )
+        return
     async_add_entities([TuyaBLEMeshLight(coordinator, entry.entry_id, device_info)])
 
 
@@ -612,4 +624,157 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
 
         Called automatically by CoordinatorEntity when coordinator dispatches updates.
         """
+        self.async_write_ha_state()
+
+
+# --- SIG Mesh lights (standard Light Lightness / CTL / HSL models) ---
+
+_SIG_MODEL_LIGHT_LIGHTNESS_SERVER = 0x1300
+_SIG_MODEL_LIGHT_CTL_SERVER = 0x1303
+_SIG_MODEL_LIGHT_HSL_SERVER = 0x1307
+_SIG_U16_MAX = 0xFFFF
+_SIG_CTL_KELVIN_MIN = 800
+_SIG_CTL_KELVIN_MAX = 20000
+_SIG_DEFAULT_KELVIN = 4000
+
+
+def sig_lightness_from_ha(brightness: int) -> int:
+    """Convert HA brightness (0-255) to SIG Light Lightness (0-65535)."""
+    clamped = max(0, min(brightness, HA_BRIGHTNESS_MAX))
+    return round(clamped * _SIG_U16_MAX / HA_BRIGHTNESS_MAX)
+
+
+def sig_hsl_from_ha(hs_color: tuple[float, float], brightness: int) -> tuple[int, int, int]:
+    """Convert HA hue/saturation and brightness to SIG HSL (lightness, hue, saturation).
+
+    HSL lightness of a fully saturated colour is 50 %, so HA brightness maps to
+    0-50 % lightness. Going higher would wash the colour out towards white.
+    """
+    hue = round((hs_color[0] % 360) * _SIG_U16_MAX / 360)
+    saturation = round(max(0.0, min(hs_color[1], 100.0)) * _SIG_U16_MAX / 100)
+    lightness = sig_lightness_from_ha(brightness) // 2
+    return lightness, hue, saturation
+
+
+def sig_color_modes(sig_models: frozenset[int]) -> set[ColorMode]:
+    """Pick HA colour modes from the SIG models the node reported."""
+    modes: set[ColorMode] = set()
+    if _SIG_MODEL_LIGHT_HSL_SERVER in sig_models:
+        modes.add(ColorMode.HS)
+    if _SIG_MODEL_LIGHT_CTL_SERVER in sig_models:
+        modes.add(ColorMode.COLOR_TEMP)
+    if not modes:
+        if _SIG_MODEL_LIGHT_LIGHTNESS_SERVER in sig_models:
+            modes.add(ColorMode.BRIGHTNESS)
+        else:
+            modes.add(ColorMode.ONOFF)
+    return modes
+
+
+class TuyaBLEMeshSIGLight(TuyaBLEMeshEntity, LightEntity):
+    """Light entity for a SIG Mesh node provisioned directly over BLE.
+
+    The node only reports on/off back to us, so brightness and colour are
+    kept as the last values Home Assistant sent.
+    """
+
+    _attr_should_poll = False
+    _attr_name = None  # Use device name as entity name
+    _attr_unique_id: str
+    _attr_min_color_temp_kelvin = 2700
+    _attr_max_color_temp_kelvin = 6500
+
+    def __init__(
+        self,
+        coordinator: TuyaBLEMeshCoordinator,
+        entry_id: str,
+        device_info: DeviceInfo | None,
+        sig_models: frozenset[int],
+    ) -> None:
+        """Initialize the SIG Mesh light entity.
+
+        Args:
+            coordinator: Coordinator managing the BLE mesh device state.
+            entry_id: Config entry ID used to scope the unique entity ID.
+            device_info: Device registry info for grouping entities under a device.
+            sig_models: SIG model IDs reported by the node at provisioning.
+        """
+        super().__init__(coordinator, entry_id, device_info)
+        self._attr_unique_id = f"{coordinator.device.address}_light"
+        self._attr_supported_color_modes = sig_color_modes(sig_models)
+        if ColorMode.COLOR_TEMP in self._attr_supported_color_modes:
+            self._attr_color_mode = ColorMode.COLOR_TEMP
+        else:
+            self._attr_color_mode = next(iter(self._attr_supported_color_modes))
+        self._attr_brightness = HA_BRIGHTNESS_MAX
+        self._attr_color_temp_kelvin = _SIG_DEFAULT_KELVIN
+        self._attr_hs_color = (0.0, 0.0)
+        self._command_lock = asyncio.Lock()
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the light is on."""
+        return bool(self.coordinator.state.is_on)
+
+    async def _send(self, coro_func: Callable[[], Any], description: str) -> None:
+        try:
+            await self.coordinator.send_command_with_retry(coro_func, description=description)
+        except (OSError, ConnectionError, TimeoutError) as exc:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="light_command_failed",
+            ) from exc
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn on the light, applying brightness, colour temperature or colour."""
+        device: Any = self.coordinator.device
+        modes = self._attr_supported_color_modes or set()
+        brightness: int = kwargs.get(ATTR_BRIGHTNESS, self._attr_brightness or HA_BRIGHTNESS_MAX)
+
+        async with self._command_lock:
+            if ATTR_HS_COLOR in kwargs and ColorMode.HS in modes:
+                hs_color: tuple[float, float] = kwargs[ATTR_HS_COLOR]
+                lightness, hue, saturation = sig_hsl_from_ha(hs_color, brightness)
+                await self._send(
+                    lambda: device.send_light_hsl(lightness, hue, saturation), "send_light_hsl"
+                )
+                self._attr_hs_color = hs_color
+                self._attr_color_mode = ColorMode.HS
+            elif ATTR_COLOR_TEMP_KELVIN in kwargs and ColorMode.COLOR_TEMP in modes:
+                kelvin = max(
+                    _SIG_CTL_KELVIN_MIN, min(kwargs[ATTR_COLOR_TEMP_KELVIN], _SIG_CTL_KELVIN_MAX)
+                )
+                lightness = sig_lightness_from_ha(brightness)
+                await self._send(lambda: device.send_light_ctl(lightness, kelvin), "send_light_ctl")
+                self._attr_color_temp_kelvin = kelvin
+                self._attr_color_mode = ColorMode.COLOR_TEMP
+            elif ATTR_BRIGHTNESS in kwargs and ColorMode.ONOFF not in modes:
+                if self._attr_color_mode == ColorMode.HS:
+                    lightness, hue, saturation = sig_hsl_from_ha(
+                        self._attr_hs_color or (0.0, 0.0), brightness
+                    )
+                    await self._send(
+                        lambda: device.send_light_hsl(lightness, hue, saturation),
+                        "send_light_hsl",
+                    )
+                else:
+                    lightness = sig_lightness_from_ha(brightness)
+                    await self._send(
+                        lambda: device.send_light_lightness(lightness), "send_light_lightness"
+                    )
+            else:
+                await self._send(lambda: device.send_power(True), "send_power(True)")
+
+        self._attr_brightness = brightness
+        self.coordinator.assume_state({"is_on": True}, {"is_on": True})
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn off the light."""
+        device: Any = self.coordinator.device
+        async with self._command_lock:
+            await self._send(lambda: device.send_power(False), "send_power(False)")
+        self.coordinator.assume_state({"is_on": False}, {"is_on": False})
+
+    def _handle_coordinator_update(self) -> None:
+        """Write state when the coordinator reports a change."""
         self.async_write_ha_state()

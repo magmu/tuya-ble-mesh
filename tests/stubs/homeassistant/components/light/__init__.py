@@ -50,6 +50,7 @@ class LightEntity(Entity):
     _attr_is_on: bool | None = None
     _attr_color_temp_kelvin: int | None = None
     _attr_rgb_color: tuple[int, int, int] | None = None
+    _attr_hs_color: tuple[float, float] | None = None
     _attr_effect: str | None = None
     _attr_supported_features: LightEntityFeature = LightEntityFeature(0)
     _attr_supported_color_modes: set[ColorMode] | None = None
@@ -67,6 +68,10 @@ class LightEntity(Entity):
     @property
     def color_temp_kelvin(self) -> int | None:
         return self._attr_color_temp_kelvin
+
+    @property
+    def hs_color(self) -> tuple[float, float] | None:
+        return self._attr_hs_color
 
     @property
     def min_color_temp_kelvin(self) -> int:
