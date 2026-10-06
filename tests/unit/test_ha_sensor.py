@@ -80,7 +80,8 @@ class TestSensorDescriptions:
         assert desc.entity_category == EntityCategory.DIAGNOSTIC
         assert desc.entity_registry_enabled_default is False
         assert desc.value_fn is not None
-        assert desc.available_fn is None
+        assert desc.available_fn is not None
+        assert desc.requires_connection is False
 
     def test_power_description(self) -> None:
         """Test power sensor description."""
@@ -123,6 +124,18 @@ class TestRSSISensor:
     def test_not_available(self) -> None:
         coord = make_mock_coordinator(available=False)
         desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "rssi")
+        sensor = TuyaBLEMeshSensor(coord, "entry1", desc)
+        assert sensor.available is False
+
+    def test_firmware_available_offline(self) -> None:
+        coord = make_mock_coordinator(available=False, firmware_version="1.6")
+        desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "firmware")
+        sensor = TuyaBLEMeshSensor(coord, "entry1", desc)
+        assert sensor.available is True
+
+    def test_firmware_unavailable_when_unknown(self) -> None:
+        coord = make_mock_coordinator(available=True, firmware_version=None)
+        desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "firmware")
         sensor = TuyaBLEMeshSensor(coord, "entry1", desc)
         assert sensor.available is False
 

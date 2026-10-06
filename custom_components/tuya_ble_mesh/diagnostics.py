@@ -300,6 +300,19 @@ async def async_get_config_entry_diagnostics(
             "protocol": getattr(caps, "protocol", "unknown"),
         }
 
+        # SIG Mesh model list per element (shows what the device can report)
+        composition = getattr(device, "composition", None)
+        if composition is not None:
+            diag["composition"] = [
+                {
+                    "sig_models": [f"0x{model:04X}" for model in element.sig_models],
+                    "vendor_models": [
+                        f"0x{cid:04X}:0x{mid:04X}" for cid, mid in element.vendor_models
+                    ],
+                }
+                for element in composition.elements
+            ]
+
         # Connection quality based on current RSSI
         diag["connection_quality"] = _build_connection_quality(state.rssi)
 

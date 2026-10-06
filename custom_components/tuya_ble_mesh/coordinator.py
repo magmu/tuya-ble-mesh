@@ -666,7 +666,9 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
 
     def _handle_reconnected(self, response_time: float) -> None:
         self._state = replace(
-            self._state, available=True, firmware_version=self._device.firmware_version
+            self._state,
+            available=True,
+            firmware_version=self._device.firmware_version or self._state.firmware_version,
         )
         self.start_rssi_polling()
         self._schedule_seq_save()
@@ -821,8 +823,16 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         except Exception:
             _LOGGER.warning("Failed to send timestamp sync response", exc_info=True)
 
+    def seed_firmware_version(self, version: str | None) -> None:
+        """Show a previously stored firmware version until the device reports one."""
+        if version and self._state.firmware_version is None:
+            self._state = replace(self._state, firmware_version=version)
+
     def _on_composition_update(self, comp: CompositionData) -> None:
-        self._state = replace(self._state, firmware_version=self._device.firmware_version)
+        self._state = replace(
+            self._state,
+            firmware_version=self._device.firmware_version or self._state.firmware_version,
+        )
         self._dispatch_update()
 
     def _on_disconnect(self) -> None:
@@ -955,7 +965,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         self._state = replace(
             self._state,
             available=True,
-            firmware_version=self._device.firmware_version,
+            firmware_version=self._device.firmware_version or self._state.firmware_version,
             last_seen=time.time(),
         )
         _LOGGER.info(

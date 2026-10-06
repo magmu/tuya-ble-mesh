@@ -218,6 +218,11 @@ class SIGMeshDevice(SIGMeshDeviceCommandsMixin, SIGMeshDeviceSegmentsMixin):  # 
         return self._firmware_version
 
     @property
+    def composition(self) -> CompositionData | None:
+        """Return the parsed Composition Data, or None before it arrives."""
+        return self._composition
+
+    @property
     def rssi(self) -> int | None:
         """Return the current RSSI from the BLE connection, or None if not connected.
 

@@ -63,6 +63,11 @@ class TuyaBLEMeshFirmwareUpdateEntity(TuyaBLEMeshEntity, UpdateEntity):
         self._attr_unique_id = f"{entry_id}_firmware"
 
     @property
+    def available(self) -> bool:
+        """Firmware is static, so show the last known version while offline."""
+        return self.coordinator.state.firmware_version is not None
+
+    @property
     def installed_version(self) -> str | None:
         """Return the currently-installed firmware version, or None if unknown."""
         version: str | None = self.coordinator.state.firmware_version

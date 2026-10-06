@@ -376,6 +376,30 @@ class TestAsyncGetDiagnostics:
         assert result["mesh_topology"]["mode"] == "direct_ble"
         assert result["mesh_topology"]["local_ble"] is True
 
+    @pytest.mark.asyncio
+    async def test_composition_models_listed(self) -> None:
+        """SIG model IDs per element appear in diagnostics."""
+        from tuya_ble_mesh.sig_mesh_protocol import CompositionElement
+
+        entry = make_mock_entry(entry_id="comp_entry")
+        coordinator = MagicMock()
+        coordinator.statistics.response_times = []
+        coordinator.device.address = "AA:BB:CC:DD:EE:FF"
+        del coordinator.device.bridge_url
+        coordinator.device.composition.elements = (
+            CompositionElement(location=0, sig_models=(0x0000, 0x1000), vendor_models=()),
+            CompositionElement(location=0, sig_models=(0x1306,), vendor_models=((0x07D0, 0x0001),)),
+        )
+        entry.runtime_data = MagicMock()
+        entry.runtime_data.coordinator = coordinator
+
+        result = await async_get_config_entry_diagnostics(MagicMock(), entry)
+
+        assert result["composition"] == [
+            {"sig_models": ["0x0000", "0x1000"], "vendor_models": []},
+            {"sig_models": ["0x1306"], "vendor_models": ["0x07D0:0x0001"]},
+        ]
+
 
 @pytest.mark.requires_ha
 class TestSecurityVerification:
