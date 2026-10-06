@@ -405,3 +405,29 @@ class TestSIGLightEntity:
         with pytest.raises(HomeAssistantError):
             await light.async_turn_off()
         coord.assume_state.assert_not_called()
+
+
+class TestCreateSIGDevice:
+    """Regression: the factory passed ble_connect_callback, which SIGMeshDevice rejects."""
+
+    @pytest.mark.parametrize("device_type", [DEVICE_TYPE_SIG_LIGHT, DEVICE_TYPE_SIG_PLUG])
+    def test_creates_real_sig_device(self, device_type: str) -> None:
+        from custom_components.tuya_ble_mesh.device_factory import create_device
+
+        data = {
+            "net_key": "00" * 16,
+            "dev_key": "11" * 16,
+            "app_key": "22" * 16,
+            "unicast_target": "00B0",
+            "unicast_our": "0001",
+            "iv_index": 0,
+        }
+        device = create_device(
+            device_type,
+            "AA:BB:CC:DD:EE:FF",
+            data,
+            ble_device_callback=MagicMock(),
+            ble_connect_callback=MagicMock(),
+        )
+        assert isinstance(device, SIGMeshDevice)
+        assert device.address == "AA:BB:CC:DD:EE:FF"
