@@ -1246,6 +1246,35 @@ class TestSeqPersistenceExtended:
 
         device.set_seq.assert_not_called()
 
+    def test_dispatch_update_schedules_set_updated_data(self) -> None:
+        """With an entry, dispatch schedules the sync callback, not a task of None."""
+        device = _make_sig_mesh_device()
+        hass = MagicMock()
+        coord = TuyaBLEMeshCoordinator(device, hass=hass, entry_id="test_entry")
+        coord._entry = MagicMock()
+
+        coord._dispatch_update()
+
+        hass.loop.call_soon_threadsafe.assert_called_once_with(coord.async_set_updated_data, None)
+        coord._entry.async_create_background_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_load_seq_fresh_entry_starts_above_provisioning(self) -> None:
+        """A fresh entry starts above the low seqs that provisioning used."""
+        device = _make_sig_mesh_device()
+        device.get_seq = MagicMock(return_value=0)
+        mock_store = MagicMock()
+        mock_store.async_load = AsyncMock(return_value=None)
+
+        coord = TuyaBLEMeshCoordinator(device, hass=MagicMock(), entry_id="test_entry")
+        with patch(
+            "homeassistant.helpers.storage.Store",
+            return_value=mock_store,
+        ):
+            await coord._load_seq()
+
+        device.set_seq.assert_called_once_with(_SEQ_SAFETY_MARGIN)
+
     @pytest.mark.asyncio
     async def test_save_seq_noop_without_get_seq(self) -> None:
         """_save_seq should be no-op if device lacks get_seq method."""
