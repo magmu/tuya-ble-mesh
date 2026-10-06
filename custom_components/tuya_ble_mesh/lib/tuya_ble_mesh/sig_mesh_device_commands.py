@@ -37,6 +37,7 @@ from tuya_ble_mesh.sig_mesh_device_segments import (
     _OPCODE_MODEL_APP_STATUS,
 )
 from tuya_ble_mesh.sig_mesh_protocol import (
+    MAX_UNSEG_ACCESS_PAYLOAD,
     MODEL_LIGHT_CTL_TEMPERATURE_SERVER,
     OP_CONFIG_COMPOSITION_STATUS,
     SEG_DATA_SIZE,
@@ -212,34 +213,57 @@ class SIGMeshDeviceCommandsMixin:
             msg = "No application key loaded"
             raise SIGMeshKeyError(msg)
 
-        seq = await self._next_seq()
+        if len(access_payload) <= MAX_UNSEG_ACCESS_PAYLOAD:
+            seq = await self._next_seq()
+            pdus = [
+                (
+                    seq,
+                    make_access_unsegmented(
+                        app_key,
+                        self._our_addr,
+                        self._target_addr,
+                        seq,
+                        self._keys.iv_index,
+                        access_payload,
+                        akf=1,
+                        aid=self._keys.aid,
+                    ),
+                )
+            ]
+        else:
+            # Longer payloads (e.g. the 13-byte timestamp sync reply) need segmenting
+            upper_len = len(access_payload) + 4  # + 4-byte MIC (szmic=0)
+            n_segs = (upper_len + SEG_DATA_SIZE - 1) // SEG_DATA_SIZE
+            seq = await self._next_seqs(n_segs)
+            pdus = make_access_segmented(
+                app_key,
+                self._our_addr,
+                self._target_addr,
+                seq,
+                self._keys.iv_index,
+                access_payload,
+                akf=1,
+                aid=self._keys.aid,
+            )
 
-        transport_pdu = make_access_unsegmented(
-            app_key,
-            self._our_addr,
-            self._target_addr,
-            seq,
-            self._keys.iv_index,
-            access_payload,
-            akf=1,
-            aid=self._keys.aid,
-        )
-
-        network_pdu = encrypt_network_pdu(
-            self._keys.enc_key,
-            self._keys.priv_key,
-            self._keys.nid,
-            ctl=0,
-            ttl=_DEFAULT_TTL,
-            seq=seq,
-            src=self._our_addr,
-            dst=self._target_addr,
-            transport_pdu=transport_pdu,
-            iv_index=self._keys.iv_index,
-        )
-
-        proxy_pdu = make_proxy_pdu(network_pdu)
-        await self._client.write_gatt_char(SIG_MESH_PROXY_DATA_IN, proxy_pdu, response=False)
+        for pdu_seq, transport_pdu in pdus:
+            network_pdu = encrypt_network_pdu(
+                self._keys.enc_key,
+                self._keys.priv_key,
+                self._keys.nid,
+                ctl=0,
+                ttl=_DEFAULT_TTL,
+                seq=pdu_seq,
+                src=self._our_addr,
+                dst=self._target_addr,
+                transport_pdu=transport_pdu,
+                iv_index=self._keys.iv_index,
+            )
+            await self._client.write_gatt_char(
+                SIG_MESH_PROXY_DATA_IN, make_proxy_pdu(network_pdu), response=False
+            )
+            if len(pdus) > 1:
+                await asyncio.sleep(STATUS_WAIT_POLL_INTERVAL)
 
         _LOGGER.info(
             "Vendor command sent to 0x%04X (opcode=%s, seq=%d, %d bytes)",
@@ -248,6 +272,23 @@ class SIGMeshDeviceCommandsMixin:
             seq,
             len(access_payload),
         )
+
+    async def request_tuya_dps(self) -> None:
+        """Ask a device with the Tuya vendor model to report all its data points.
+
+        Replies arrive as vendor messages (opcode 0xCDD007) via the vendor
+        callbacks. Skipped when Composition Data shows no Tuya vendor model.
+        """
+        from tuya_ble_mesh.sig_mesh_protocol import TUYA_VENDOR_CID, tuya_vendor_dp_query
+
+        composition = self._composition
+        if composition is not None and not any(
+            cid == TUYA_VENDOR_CID
+            for element in composition.elements
+            for cid, _model in element.vendor_models
+        ):
+            return
+        await self.send_vendor_command(tuya_vendor_dp_query())
 
     async def _send_app_message(
         self, access_payload: bytes, description: str, *, dst: int | None = None

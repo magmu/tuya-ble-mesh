@@ -348,6 +348,11 @@ Non-standard DPs (2, 6, 8) use the Tuya vendor model.
 | Data length | 1 byte | Payload length |
 | Data | N bytes | DP payload (see DP wire format above) |
 
+The integration answers a timestamp sync request with a 13-byte WRITE_UNACK
+(sent segmented, since unsegmented access payloads max out at 11 bytes) and,
+after each connect, sends READ `0xCCD007` with frame `01 00` (DP data, empty
+list) to ask for every DP. Unmapped DPs are logged at INFO as "Tuya data point".
+
 ---
 
 ## 8. Device Categories

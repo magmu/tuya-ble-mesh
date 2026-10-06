@@ -108,6 +108,8 @@ LIGHT_CTL_TEMP_MAX = 20000
 TUYA_VENDOR_OPCODE = 0xCDD007
 TUYA_VENDOR_WRITE_ACK = 0xC9D007
 TUYA_VENDOR_WRITE_UNACK = 0xCAD007
+TUYA_VENDOR_READ = 0xCCD007
+TUYA_VENDOR_CID = 0x07D0
 TUYA_CMD_DP_DATA = 0x01
 TUYA_CMD_TIMESTAMP_SYNC = 0x02
 DP_ID_SWITCH = 1
@@ -439,6 +441,11 @@ def tuya_vendor_timestamp_response() -> bytes:
     data = ts_bytes + tz_byte + b"\x00\x00\x00"
     frame = bytes([TUYA_CMD_TIMESTAMP_SYNC, len(data)]) + data
     return opcode_bytes + frame
+
+
+def tuya_vendor_dp_query() -> bytes:
+    """Build a Tuya vendor READ payload asking the device to report all its DPs."""
+    return TUYA_VENDOR_READ.to_bytes(3, "big") + bytes([TUYA_CMD_DP_DATA, 0])
 
 
 def parse_tuya_vendor_dps(params: bytes) -> list[TuyaVendorDP]:
