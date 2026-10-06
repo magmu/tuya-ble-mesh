@@ -8,7 +8,7 @@ This fork of [11z4t/tuya-ble-mesh](https://github.com/11z4t/tuya-ble-mesh) adds 
 
 - Work goes through PRs to `main`. The maintainer merges; agents never merge or approve.
 - Bumping `version` in `custom_components/tuya_ble_mesh/manifest.json` and merging to `main` publishes a release (`.github/workflows/release.yml`). HACS only offers proper updates through releases, so bump the version in any PR that changes the integration. Docs-only PRs don't need a bump.
-- CI (`.github/workflows/ci.yml`) must be green before asking for a merge. It runs ruff (Markdown excluded), mypy on lib and integration, pytest on Python 3.13 using `requirements_test.txt`, hassfest, HACS validation, and icon-check.
+- CI (`.github/workflows/ci.yml`) must be green before asking for a merge. It runs ruff (Markdown excluded), mypy on lib and integration, pytest on Python 3.13 using `requirements_test.txt`, hassfest, HACS validation, icon-check, and a security job running bandit, pip-audit (manifest requirements) and detect-secrets (PR #22).
 - To check locally: `ruff check` and `ruff format --check` on `custom_components tests`; `mypy custom_components/tuya_ble_mesh`; `pytest tests/unit tests/security tests/integration`. Don't use `pip install -e .`, because it fails on the flat layout.
 - hassfest rejects manifest requirements that Home Assistant already ships (for example `cryptography`).
 - Two PRs that both bump the version conflict on `manifest.json`. Merge `main` into the second one and keep the higher version.
