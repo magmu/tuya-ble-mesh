@@ -157,6 +157,7 @@ class TestDeviceLightCommands:
     @pytest.mark.parametrize(
         ("method", "args"),
         [
+            ("request_onoff_state", ()),
             ("send_light_lightness", (0x8000,)),
             ("send_light_ctl", (0x8000, 3000)),
             ("send_light_hsl", (0x4000, 0x1000, 0xFFFF)),

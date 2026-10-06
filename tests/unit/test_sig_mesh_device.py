@@ -588,3 +588,58 @@ class TestCompositionData:
         # connect() calls request_composition_data internally,
         # plus we can verify it wrote to GATT
         assert mock_client.write_gatt_char.call_count >= 1
+
+
+class TestConnectRequestsOnOffState:
+    """connect() asks the node for its on/off state."""
+
+    @pytest.mark.asyncio
+    async def test_connect_requests_onoff_state(self) -> None:
+        secrets = make_mock_secrets()
+        dev = SIGMeshDevice("DC:23:4F:10:52:C4", 0x00AA, 0x0001, secrets)
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.start_notify = AsyncMock()
+        mock_client.write_gatt_char = AsyncMock()
+        mock_client.is_connected = True
+
+        with (
+            patch("tuya_ble_mesh.sig_mesh_device.BleakScanner") as mock_scanner,
+            patch(
+                "tuya_ble_mesh.sig_mesh_device.BleakClient",
+                return_value=mock_client,
+            ),
+            patch.object(dev, "request_onoff_state", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_scanner.find_device_by_address = AsyncMock(return_value=MagicMock())
+            await dev.connect(max_retries=1)
+
+        mock_get.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_connect_survives_onoff_request_failure(self) -> None:
+        secrets = make_mock_secrets()
+        dev = SIGMeshDevice("DC:23:4F:10:52:C4", 0x00AA, 0x0001, secrets)
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.start_notify = AsyncMock()
+        mock_client.write_gatt_char = AsyncMock()
+        mock_client.is_connected = True
+
+        with (
+            patch("tuya_ble_mesh.sig_mesh_device.BleakScanner") as mock_scanner,
+            patch(
+                "tuya_ble_mesh.sig_mesh_device.BleakClient",
+                return_value=mock_client,
+            ),
+            patch.object(
+                dev,
+                "request_onoff_state",
+                new_callable=AsyncMock,
+                side_effect=SIGMeshError("Not connected"),
+            ),
+        ):
+            mock_scanner.find_device_by_address = AsyncMock(return_value=MagicMock())
+            await dev.connect(max_retries=1)
+
+        assert dev.is_connected
