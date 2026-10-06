@@ -7,6 +7,7 @@ Provides ``SIGMeshDeviceCommandsMixin`` which handles:
 - Config Composition Data Get
 - Config AppKey Add (segmented transport)
 - Config Model App Bind
+- Light Lightness / CTL / HSL Set
 
 This mixin is not intended for standalone use — it requires attributes
 defined in ``SIGMeshDevice.__init__``.
@@ -25,6 +26,7 @@ from tuya_ble_mesh.const import (
     STATUS_WAIT_POLL_INTERVAL,
 )
 from tuya_ble_mesh.exceptions import (
+    MalformedPacketError,
     MeshConnectionError,
     SIGMeshError,
     SIGMeshKeyError,
@@ -35,19 +37,23 @@ from tuya_ble_mesh.sig_mesh_device_segments import (
     _OPCODE_MODEL_APP_STATUS,
 )
 from tuya_ble_mesh.sig_mesh_protocol import (
+    OP_CONFIG_COMPOSITION_STATUS,
     SEG_DATA_SIZE,
     config_appkey_add,
     config_composition_get,
     config_model_app_bind,
     encrypt_network_pdu,
     generic_onoff_set,
+    light_ctl_set,
+    light_hsl_set,
+    light_lightness_set,
     make_access_segmented,
     make_access_unsegmented,
     make_proxy_pdu,
 )
 
 if TYPE_CHECKING:
-    from tuya_ble_mesh.sig_mesh_protocol import MeshKeys
+    from tuya_ble_mesh.sig_mesh_protocol import CompositionData, MeshKeys
 
 _LOGGER = MeshLogAdapter(logging.getLogger(__name__), {})
 
@@ -83,6 +89,8 @@ class SIGMeshDeviceCommandsMixin:
     _correlation_id: int
     _segment_lock: asyncio.Lock
     _pending_responses: dict[tuple[int, int], asyncio.Future[bytes]]
+    _composition: CompositionData | None
+    _firmware_version: str | None
 
     async def _next_seq(self) -> int:
         raise NotImplementedError
@@ -237,6 +245,126 @@ class SIGMeshDeviceCommandsMixin:
             len(access_payload),
         )
 
+    async def _send_app_message(self, access_payload: bytes, description: str) -> None:
+        """Encrypt an unsegmented access message with the AppKey and send it.
+
+        Args:
+            access_payload: Complete access payload including opcode.
+            description: Short label for the log line.
+
+        Raises:
+            SIGMeshError: If not connected or keys not loaded.
+            SIGMeshKeyError: If no application key is loaded.
+        """
+        if self._client is None or self._keys is None:
+            msg = "Not connected"
+            raise SIGMeshError(msg)
+
+        app_key = self._keys.app_key
+        if app_key is None:
+            msg = "No application key loaded"
+            raise SIGMeshKeyError(msg)
+
+        seq = await self._next_seq()
+        transport_pdu = make_access_unsegmented(
+            app_key,
+            self._our_addr,
+            self._target_addr,
+            seq,
+            self._keys.iv_index,
+            access_payload,
+            akf=1,
+            aid=self._keys.aid,
+        )
+        network_pdu = encrypt_network_pdu(
+            self._keys.enc_key,
+            self._keys.priv_key,
+            self._keys.nid,
+            ctl=0,
+            ttl=_DEFAULT_TTL,
+            seq=seq,
+            src=self._our_addr,
+            dst=self._target_addr,
+            transport_pdu=transport_pdu,
+            iv_index=self._keys.iv_index,
+        )
+        await self._client.write_gatt_char(
+            SIG_MESH_PROXY_DATA_IN, make_proxy_pdu(network_pdu), response=False
+        )
+        _LOGGER.info("%s sent to 0x%04X (seq=%d)", description, self._target_addr, seq)
+
+    def _take_tid(self) -> int:
+        tid = self._tid
+        self._tid = (self._tid + 1) & 0xFF
+        return tid
+
+    async def send_light_lightness(self, lightness: int) -> None:
+        """Send Light Lightness Set (0..0xFFFF)."""
+        await self._send_app_message(
+            light_lightness_set(lightness, self._take_tid()), f"Light Lightness {lightness}"
+        )
+
+    async def send_light_ctl(self, lightness: int, temperature: int) -> None:
+        """Send Light CTL Set (lightness 0..0xFFFF, temperature in kelvin)."""
+        await self._send_app_message(
+            light_ctl_set(lightness, temperature, 0, self._take_tid()),
+            f"Light CTL {lightness}/{temperature}K",
+        )
+
+    async def send_light_hsl(self, lightness: int, hue: int, saturation: int) -> None:
+        """Send Light HSL Set (all values 0..0xFFFF)."""
+        await self._send_app_message(
+            light_hsl_set(lightness, hue, saturation, self._take_tid()),
+            f"Light HSL {lightness}/{hue}/{saturation}",
+        )
+
+    async def get_composition_data(
+        self, *, response_timeout: float = DEFAULT_SIG_MESH_RESPONSE_TIMEOUT
+    ) -> CompositionData:
+        """Request Composition Data page 0 and wait for the parsed response.
+
+        Raises:
+            SIGMeshError: If not connected, the response times out, or is malformed.
+        """
+        from tuya_ble_mesh.sig_mesh_protocol import parse_composition_data
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bytes] = loop.create_future()
+        async with self._segment_lock:
+            corr_id = self._correlation_id
+            self._correlation_id += 1
+            resp_key = (OP_CONFIG_COMPOSITION_STATUS, corr_id)
+            self._pending_responses[resp_key] = future
+
+        try:
+            await self.request_composition_data()
+            params = await asyncio.wait_for(asyncio.shield(future), timeout=response_timeout)
+        except TimeoutError:
+            msg = "Timeout waiting for Composition Data Status"
+            raise SIGMeshError(msg) from None
+        finally:
+            async with self._segment_lock:
+                self._pending_responses.pop(resp_key, None)
+
+        try:
+            comp = parse_composition_data(params)
+            elements = comp.elements
+        except MalformedPacketError as exc:
+            msg = f"Malformed Composition Data: {exc}"
+            raise SIGMeshError(msg) from exc
+
+        self._composition = comp
+        self._firmware_version = f"CID:{comp.cid:04X} PID:{comp.pid:04X} VID:{comp.vid:04X}"
+        for index, element in enumerate(elements):
+            _LOGGER.info(
+                "Composition element %d of 0x%04X: SIG models [%s], vendor models [%s]",
+                index,
+                self._target_addr,
+                ", ".join(f"0x{m:04X}" for m in element.sig_models),
+                ", ".join(f"0x{c:04X}:0x{m:04X}" for c, m in element.vendor_models),
+            )
+        return comp
+
     async def request_composition_data(self) -> None:
         """Send Config Composition Data Get to retrieve device info.
 
@@ -387,6 +515,7 @@ class SIGMeshDeviceCommandsMixin:
         app_idx: int,
         model_id: int,
         *,
+        company_id: int | None = None,
         response_timeout: float = SIG_MESH_ONOFF_RESPONSE_TIMEOUT,
     ) -> bool:
         """Send Config Model App Bind and wait for Status.
@@ -397,6 +526,7 @@ class SIGMeshDeviceCommandsMixin:
             element_addr: Element unicast address.
             app_idx: Application key index to bind.
             model_id: SIG Model ID (e.g. 0x1000 for GenericOnOff Server).
+            company_id: Company ID when binding a vendor model.
             response_timeout: Seconds to wait for Model App Status response.
 
         Returns:
@@ -409,7 +539,7 @@ class SIGMeshDeviceCommandsMixin:
             msg = "Not connected"
             raise SIGMeshError(msg)
 
-        access_payload = config_model_app_bind(element_addr, app_idx, model_id)
+        access_payload = config_model_app_bind(element_addr, app_idx, model_id, company_id)
         seq = await self._next_seq()
 
         transport_pdu = make_access_unsegmented(

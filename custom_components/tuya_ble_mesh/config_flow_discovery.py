@@ -130,7 +130,14 @@ async def async_step_bluetooth(
     is_sig_mesh = (
         is_s17_plug or SIG_MESH_PROV_UUID in service_uuids or SIG_MESH_PROXY_UUID in service_uuids
     )
-    device_category = "Smart Plug" if is_sig_mesh else "LED Light"
+    # Unprovisioned SIG nodes may be plugs or lights; the type is decided from
+    # Composition Data after provisioning.
+    if is_s17_plug:
+        device_category = "Smart Plug"
+    elif is_sig_mesh:
+        device_category = "SIG Mesh Device"
+    else:
+        device_category = "LED Light"
     rssi = getattr(discovery_info, "rssi", None)
 
     #  Auto-detect device type based on service UUIDs or name pattern

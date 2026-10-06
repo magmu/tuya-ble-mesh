@@ -210,6 +210,9 @@
     "switch_off_failed": {
       "message": "Kunde inte stänga av strömbrytaren"
     },
+    "light_command_failed": {
+      "message": "Kunde inte skicka kommando till lampan"
+    },
     "device_connection_failed": {
       "message": "Kunde inte ansluta till enheten. Kontrollera att den är påslagen och inom Bluetooth-räckvidd. Home Assistant försöker igen automatiskt."
     },

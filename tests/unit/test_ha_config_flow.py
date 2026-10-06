@@ -424,7 +424,7 @@ class TestSIGPlugStep:
 
         with patch(
             "custom_components.tuya_ble_mesh.config_flow_sig.run_provision",
-            new=AsyncMock(return_value=(_TEST_NET_KEY, _TEST_DEV_KEY, _TEST_APP_KEY)),
+            new=AsyncMock(return_value=(_TEST_NET_KEY, _TEST_DEV_KEY, _TEST_APP_KEY, frozenset())),
         ):
             result = await flow.async_step_sig_plug({})
 
@@ -439,6 +439,33 @@ class TestSIGPlugStep:
         assert result["data"][CONF_MAC_ADDRESS] == "AA:BB:CC:DD:EE:FF"
 
     @pytest.mark.asyncio
+    async def test_sig_step_creates_light_entry(self) -> None:
+        """A node with a Light Lightness Server becomes a sig_light entry."""
+        flow = _make_flow()
+        flow._discovery_info = {
+            "address": "AA:BB:CC:DD:EE:FF",
+            "name": "SIG Mesh FF",
+        }
+
+        with patch(
+            "custom_components.tuya_ble_mesh.config_flow_sig.run_provision",
+            new=AsyncMock(
+                return_value=(
+                    _TEST_NET_KEY,
+                    _TEST_DEV_KEY,
+                    _TEST_APP_KEY,
+                    frozenset({0x1307, 0x1000, 0x1300}),
+                )
+            ),
+        ):
+            result = await flow.async_step_sig_plug({})
+
+        assert result["type"] == "create_entry"
+        assert result["data"][CONF_DEVICE_TYPE] == "sig_light"
+        assert result["data"]["sig_models"] == [0x1000, 0x1300, 0x1307]
+        assert result["title"].startswith("LED Light")
+
+    @pytest.mark.asyncio
     async def test_sig_plug_step_defaults(self) -> None:
         """Auto-provisioning sets fixed default unicast addresses."""
         flow = _make_flow()
@@ -449,7 +476,7 @@ class TestSIGPlugStep:
 
         with patch(
             "custom_components.tuya_ble_mesh.config_flow_sig.run_provision",
-            new=AsyncMock(return_value=(_TEST_NET_KEY, _TEST_DEV_KEY, _TEST_APP_KEY)),
+            new=AsyncMock(return_value=(_TEST_NET_KEY, _TEST_DEV_KEY, _TEST_APP_KEY, frozenset())),
         ):
             result = await flow.async_step_sig_plug({})
 
@@ -588,7 +615,7 @@ class TestAutoDiscovery:
         # Step 2: submit sig_plug form (empty — auto-provisions) → entry created
         with patch(
             "custom_components.tuya_ble_mesh.config_flow_sig.run_provision",
-            new=AsyncMock(return_value=(_TEST_NET_KEY, _TEST_DEV_KEY, _TEST_APP_KEY)),
+            new=AsyncMock(return_value=(_TEST_NET_KEY, _TEST_DEV_KEY, _TEST_APP_KEY, frozenset())),
         ):
             result = await flow.async_step_sig_plug({})
         assert result["type"] == "create_entry"
@@ -1141,7 +1168,7 @@ class TestRunProvision:
         mock_device = MagicMock()
         mock_device.connect = AsyncMock()
         mock_device.disconnect = AsyncMock()
-        mock_device.send_config_app_key_add = AsyncMock(return_value=True)
+        mock_device.send_config_appkey_add = AsyncMock(return_value=True)
         mock_device.send_config_model_app_bind = AsyncMock(return_value=True)
 
         with (
@@ -1153,7 +1180,9 @@ class TestRunProvision:
             mock_provisioner.provision = AsyncMock(return_value=mock_prov_result)
             mock_prov_cls.return_value = mock_provisioner
 
-            net_key, dev_key, app_key = await run_provision(flow.hass, "AA:BB:CC:DD:EE:FF")
+            net_key, dev_key, app_key, sig_models = await run_provision(
+                flow.hass, "AA:BB:CC:DD:EE:FF"
+            )
 
         # Verify keys are 32-char hex strings
         assert len(net_key) == 32
@@ -1161,6 +1190,11 @@ class TestRunProvision:
         assert len(app_key) == 32
         assert all(c in "0123456789abcdef" for c in net_key)
         assert dev_key == _TEST_DEV_KEY
+        # AppKey is actually added (regression: method name typo swallowed this step)
+        mock_device.send_config_appkey_add.assert_awaited_once()
+        # Composition Data unavailable -> GenericOnOff only, no models reported
+        assert sig_models == frozenset()
+        mock_device.send_config_model_app_bind.assert_awaited_once_with(0x00B0, 0, 0x1000)
 
     @pytest.mark.asyncio
     async def test_run_provision_appkey_add_failed(self) -> None:
@@ -1174,7 +1208,7 @@ class TestRunProvision:
         mock_device = MagicMock()
         mock_device.connect = AsyncMock()
         mock_device.disconnect = AsyncMock()
-        mock_device.send_config_app_key_add = AsyncMock(return_value=False)  # FAIL
+        mock_device.send_config_appkey_add = AsyncMock(return_value=False)  # FAIL
         mock_device.send_config_model_app_bind = AsyncMock(return_value=True)
 
         with (
@@ -1186,7 +1220,9 @@ class TestRunProvision:
             mock_provisioner.provision = AsyncMock(return_value=mock_prov_result)
             mock_prov_cls.return_value = mock_provisioner
 
-            net_key, dev_key, _app_key = await run_provision(flow.hass, "AA:BB:CC:DD:EE:FF")
+            net_key, dev_key, _app_key, _models = await run_provision(
+                flow.hass, "AA:BB:CC:DD:EE:FF"
+            )
 
         # Should still return keys (warning logged)
         assert len(net_key) == 32
@@ -1204,7 +1240,7 @@ class TestRunProvision:
         mock_device = MagicMock()
         mock_device.connect = AsyncMock()
         mock_device.disconnect = AsyncMock()
-        mock_device.send_config_app_key_add = AsyncMock(return_value=True)
+        mock_device.send_config_appkey_add = AsyncMock(return_value=True)
         mock_device.send_config_model_app_bind = AsyncMock(return_value=False)  # FAIL
 
         with (
@@ -1216,7 +1252,9 @@ class TestRunProvision:
             mock_provisioner.provision = AsyncMock(return_value=mock_prov_result)
             mock_prov_cls.return_value = mock_provisioner
 
-            net_key, dev_key, _app_key = await run_provision(flow.hass, "AA:BB:CC:DD:EE:FF")
+            net_key, dev_key, _app_key, _models = await run_provision(
+                flow.hass, "AA:BB:CC:DD:EE:FF"
+            )
 
         # Should still return keys
         assert len(net_key) == 32
@@ -1245,7 +1283,9 @@ class TestRunProvision:
             mock_prov_cls.return_value = mock_provisioner
 
             # Should still return keys despite post-config failure
-            net_key, dev_key, _app_key = await run_provision(flow.hass, "AA:BB:CC:DD:EE:FF")
+            net_key, dev_key, _app_key, _models = await run_provision(
+                flow.hass, "AA:BB:CC:DD:EE:FF"
+            )
 
         assert len(net_key) == 32
         assert dev_key == _TEST_DEV_KEY
@@ -1263,7 +1303,7 @@ class TestRunProvision:
         mock_device = MagicMock()
         mock_device.connect = AsyncMock()
         mock_device.disconnect = AsyncMock()
-        mock_device.send_config_app_key_add = AsyncMock(return_value=True)
+        mock_device.send_config_appkey_add = AsyncMock(return_value=True)
         mock_device.send_config_model_app_bind = AsyncMock(return_value=True)
 
         # Capture the callbacks passed to SIGMeshProvisioner
@@ -1337,7 +1377,7 @@ class TestRunProvision:
         mock_device = MagicMock()
         mock_device.connect = AsyncMock()
         mock_device.disconnect = AsyncMock()
-        mock_device.send_config_app_key_add = AsyncMock(return_value=True)
+        mock_device.send_config_appkey_add = AsyncMock(return_value=True)
         mock_device.send_config_model_app_bind = AsyncMock(return_value=True)
 
         # Capture the callbacks passed to SIGMeshProvisioner

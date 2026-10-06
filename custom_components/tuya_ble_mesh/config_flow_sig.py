@@ -1,6 +1,6 @@
 """SIG Mesh provisioning for Tuya BLE Mesh config flow.
 Handles:
-- SIG Mesh plug provisioning via PB-GATT
+- SIG Mesh plug and light provisioning via PB-GATT
 - SIG Mesh bridge configuration
 """
 
@@ -22,6 +22,7 @@ from custom_components.tuya_ble_mesh.const import (
     DEFAULT_BRIDGE_PORT,
     DEFAULT_IV_INDEX,
     DEVICE_TYPE_SIG_BRIDGE_PLUG,
+    DEVICE_TYPE_SIG_LIGHT,
     DEVICE_TYPE_SIG_PLUG,
 )
 
@@ -29,22 +30,89 @@ _LOGGER = logging.getLogger(__name__)
 # Unicast addresses used during provisioning
 _UNICAST_PROVISIONER = 0x0001
 _UNICAST_DEVICE_DEFAULT = 0x00B0
-# GenericOnOff Server SIG Model ID
+# SIG Model IDs (Mesh Model 7.3); foundation models are never bound to the AppKey
 _MODEL_GENERIC_ONOFF_SERVER = 0x1000
+_MODEL_LIGHT_LIGHTNESS_SERVER = 0x1300
+_FOUNDATION_MODELS = frozenset({0x0000, 0x0001, 0x0002, 0x0003})
+# Seconds to wait for the Composition Data Status after provisioning
+_COMPOSITION_TIMEOUT = 10.0
 # Seconds to wait for device to reboot as Proxy Service after provisioning
 _POST_PROV_REBOOT_DELAY = 6.0
 
 
-async def run_provision(hass: Any, mac: str) -> tuple[str, str, str]:
-    """Generate keys, provision the device, configure application key and model bind.
+def device_type_for_models(sig_models: frozenset[int]) -> str:
+    """Pick the entry device type from the SIG models a node reports."""
+    if _MODEL_LIGHT_LIGHTNESS_SERVER in sig_models:
+        return DEVICE_TYPE_SIG_LIGHT
+    return DEVICE_TYPE_SIG_PLUG
+
+
+async def _bind_app_key(device: Any, mac: str) -> frozenset[int]:
+    """Bind the AppKey to every non-foundation model the node reports.
+
+    Falls back to GenericOnOff Server on element 0 when Composition Data
+    cannot be read.
+
+    Returns:
+        SIG model IDs found in Composition Data (empty if it could not be read).
+    """
+    try:
+        comp = await device.get_composition_data(response_timeout=_COMPOSITION_TIMEOUT)
+    except Exception:
+        _LOGGER.warning(
+            "Could not read Composition Data for %s; binding GenericOnOff only",
+            mac,
+            exc_info=True,
+        )
+        bind_ok = await device.send_config_model_app_bind(
+            _UNICAST_DEVICE_DEFAULT, 0, _MODEL_GENERIC_ONOFF_SERVER
+        )
+        if not bind_ok:
+            _LOGGER.warning(
+                "Model App Bind returned non-success for %s (model=0x%04X)",
+                mac,
+                _MODEL_GENERIC_ONOFF_SERVER,
+            )
+        return frozenset()
+
+    for index, element in enumerate(comp.elements):
+        element_addr = _UNICAST_DEVICE_DEFAULT + index
+        targets: list[tuple[int, int | None]] = [
+            (model_id, None)
+            for model_id in element.sig_models
+            if model_id not in _FOUNDATION_MODELS
+        ]
+        targets += [(model_id, company_id) for company_id, model_id in element.vendor_models]
+        for model_id, company_id in targets:
+            # One failed bind must not stop the rest: the node may reject models it lists
+            try:
+                bind_ok = await device.send_config_model_app_bind(
+                    element_addr, 0, model_id, company_id=company_id
+                )
+            except Exception:
+                _LOGGER.debug("Model App Bind raised", exc_info=True)
+                bind_ok = False
+            if not bind_ok:
+                _LOGGER.warning(
+                    "Model App Bind failed for %s (element=0x%04X model=%s0x%04X)",
+                    mac,
+                    element_addr,
+                    "" if company_id is None else f"0x{company_id:04X}:",
+                    model_id,
+                )
+    return frozenset(comp.sig_models)
+
+
+async def run_provision(hass: Any, mac: str) -> tuple[str, str, str, frozenset[int]]:
+    """Generate keys, provision the device, configure application key and model binds.
     Phase 1: PB-GATT provisioning (Service 0x1827).
     Phase 2: Wait for device to reboot into Proxy Service (0x1828).
-    Phase 3: Add application key and bind to GenericOnOff Server model.
+    Phase 3: Add application key, read Composition Data and bind every model.
     Args:
         hass: Home Assistant instance.
         mac: BLE MAC address of the unprovisioned device.
     Returns:
-        Tuple of (net_key_hex, dev_key_hex, app_key_hex).
+        Tuple of (net_key_hex, dev_key_hex, app_key_hex, sig_models).
     Raises:
         ProvisioningError: If PB-GATT provisioning fails.
         Any exception from Phase 3 is logged but not re-raised.
@@ -152,6 +220,7 @@ async def run_provision(hass: Any, mac: str) -> tuple[str, str, str]:
         dev_key_name: result.dev_key.hex(),
         f"{op_prefix}-app-key/password": app_key.hex(),
     }
+    sig_models: frozenset[int] = frozenset()
     device = SIGMeshDevice(
         mac,
         _UNICAST_DEVICE_DEFAULT,
@@ -162,19 +231,11 @@ async def run_provision(hass: Any, mac: str) -> tuple[str, str, str]:
     )
     try:
         await device.connect(timeout=20.0, max_retries=5)
-        key_add_ok = await device.send_config_app_key_add(app_key)
+        key_add_ok = await device.send_config_appkey_add(app_key)
         if not key_add_ok:
             _LOGGER.warning("Application key add returned non-success for %s", mac)
         await asyncio.sleep(0.5)
-        bind_ok = await device.send_config_model_app_bind(
-            _UNICAST_DEVICE_DEFAULT, 0, _MODEL_GENERIC_ONOFF_SERVER
-        )
-        if not bind_ok:
-            _LOGGER.warning(
-                "Model App Bind returned non-success for %s (model=0x%04X)",
-                mac,
-                _MODEL_GENERIC_ONOFF_SERVER,
-            )
+        sig_models = await _bind_app_key(device, mac)
     except Exception:
         _LOGGER.warning(
             "Post-provisioning config failed for %s",
@@ -183,15 +244,16 @@ async def run_provision(hass: Any, mac: str) -> tuple[str, str, str]:
         )
     finally:
         await device.disconnect()
-    return net_key.hex(), result.dev_key.hex(), app_key.hex()
+    return net_key.hex(), result.dev_key.hex(), app_key.hex(), sig_models
 
 
 async def async_step_sig_plug(flow: Any, user_input: dict[str, Any] | None) -> FlowResult:
-    """Handle SIG Mesh plug -- auto-provisions and generates all keys.
+    """Handle a SIG Mesh device -- auto-provisions and generates all keys.
     The device is provisioned via PB-GATT (Service UUID 0x1827).
     A random network key and device key are established via a secure key exchange.
     After provisioning, the application key is added and bound to the
-    GenericOnOff Server model via the Proxy Service (UUID 0x1828).
+    node's models via the Proxy Service (UUID 0x1828). Nodes with a Light
+    Lightness Server become lights; everything else is set up as a plug.
     Args:
         flow: Config flow instance.
         user_input: Empty dict when user confirms provisioning (no fields).
@@ -202,7 +264,7 @@ async def async_step_sig_plug(flow: Any, user_input: dict[str, Any] | None) -> F
     if user_input is not None and flow._discovery_info is not None:
         mac = flow._discovery_info["address"]
         try:
-            net_key_hex, dev_key_hex, app_key_hex = await run_provision(flow.hass, mac)
+            net_key_hex, dev_key_hex, app_key_hex, sig_models = await run_provision(flow.hass, mac)
         except TimeoutError:
             _LOGGER.warning("Provisioning timed out for %s", mac)
             errors["base"] = "timeout"
@@ -247,13 +309,14 @@ async def async_step_sig_plug(flow: Any, user_input: dict[str, Any] | None) -> F
             flow._abort_if_unique_id_configured()
             return flow._finalize_entry(
                 mac=mac,
-                device_type=DEVICE_TYPE_SIG_PLUG,
+                device_type=device_type_for_models(sig_models),
                 unicast_target=f"{_UNICAST_DEVICE_DEFAULT:04X}",
                 unicast_our=f"{_UNICAST_PROVISIONER:04X}",
                 iv_index=DEFAULT_IV_INDEX,
                 net_key=net_key_hex,
                 dev_key=dev_key_hex,
                 app_key=app_key_hex,
+                sig_models=sorted(sig_models),
             )
     return flow.async_show_form(
         step_id="sig_plug",

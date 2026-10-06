@@ -86,6 +86,7 @@ from custom_components.tuya_ble_mesh.const import (
     DEVICE_TYPE_LIGHT,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_SIG_BRIDGE_PLUG,
+    DEVICE_TYPE_SIG_LIGHT,
     DEVICE_TYPE_SIG_PLUG,
     DEVICE_TYPE_TELINK_BRIDGE_LIGHT,
     DOMAIN,
@@ -155,6 +156,7 @@ class TuyaBLEMeshConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg
                 DEVICE_TYPE_LIGHT: "LED Light",
                 DEVICE_TYPE_PLUG: "Smart Plug",
                 DEVICE_TYPE_SIG_PLUG: "Smart Plug",
+                DEVICE_TYPE_SIG_LIGHT: "LED Light",
                 DEVICE_TYPE_SIG_BRIDGE_PLUG: "Smart Plug",
                 DEVICE_TYPE_TELINK_BRIDGE_LIGHT: "LED Light",
             }.get(device_type, "Smart Device")
@@ -332,7 +334,7 @@ class TuyaBLEMeshConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg
                 {
                     DEVICE_TYPE_LIGHT: "LED Light",
                     DEVICE_TYPE_PLUG: "Smart Plug",
-                    DEVICE_TYPE_SIG_PLUG: "Smart Plug (SIG Mesh)",
+                    DEVICE_TYPE_SIG_PLUG: "SIG Mesh device (plug or light)",
                     DEVICE_TYPE_TELINK_BRIDGE_LIGHT: "LED Light (via bridge)",
                 }
             ),

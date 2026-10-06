@@ -215,6 +215,9 @@
     },
     "switch_off_failed": {
       "message": "Failed to turn off switch"
+    },
+    "light_command_failed": {
+      "message": "Failed to send command to light"
     }
   },
   "services": {

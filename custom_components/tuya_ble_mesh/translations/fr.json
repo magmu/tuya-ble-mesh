@@ -210,6 +210,9 @@
     "switch_off_failed": {
       "message": "Impossible d'éteindre l'interrupteur"
     },
+    "light_command_failed": {
+      "message": "Impossible d'envoyer la commande à la lumière"
+    },
     "device_connection_failed": {
       "message": "Could not connect to device. Check that it's powered on and within Bluetooth range. Home Assistant will retry automatically."
     },

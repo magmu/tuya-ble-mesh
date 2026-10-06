@@ -210,6 +210,9 @@
     "switch_off_failed": {
       "message": "Schalter konnte nicht ausgeschaltet werden"
     },
+    "light_command_failed": {
+      "message": "Befehl konnte nicht an die Leuchte gesendet werden"
+    },
     "device_connection_failed": {
       "message": "Could not connect to device. Check that it's powered on and within Bluetooth range. Home Assistant will retry automatically."
     },
