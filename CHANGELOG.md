@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- CI security job: bandit, pip-audit (manifest requirements) and detect-secrets on every PR, push to main and weekly
+- Dependabot: weekly update PRs for pip test dependencies and GitHub Actions
+
 ## [0.42.13] — 2026-10-06 (magmu fork)
 
 ### Fixed

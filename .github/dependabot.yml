@@ -1,0 +1,16 @@
+# Weekly update PRs for pinned test/CI dependencies and GitHub Actions.
+# Security alerts for vulnerable dependencies are enabled separately in
+# Settings > Code security ("Dependabot alerts").
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
