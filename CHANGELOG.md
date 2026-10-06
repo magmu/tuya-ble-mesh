@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.42.10] — 2026-10-06 (magmu fork)
+
+Fork releases up to 0.42.10 add SIG Mesh lights over an ESPHome Bluetooth
+proxy, tested on Classy Caps Lumineer solar post caps. Summary:
+
+### Added
+- SIG Mesh lights (`sig_light`): Light Lightness, CTL and HSL control over direct BLE
+- **Solar powered** switch: no warnings or repairs while a solar light sleeps from dawn to dusk
+- **Tuya data points** diagnostic sensor (disabled by default)
+- Per-element model list (composition) in diagnostics
+- Automatic GitHub releases when the manifest version changes
+
+### Fixed
+- White temperature on lights that drop CTL Set; full CTL range used
+- Light state read back after connect and restart; sequence numbers saved after every command
+- Firmware version stays visible while offline; RSSI read from advertisements
+- Tuya DP query uses the documented "report all" frame; time-sync reply is segmented and
+  sent once the connection is ready, calendar layout first
+- Reconnects pause while a device isn't advertising
+- Quiet but reachable devices logged at debug instead of warning
+
+---
+
 ## [0.38.0] — 2026-03-31
 
 ### Removed
