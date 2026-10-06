@@ -22,6 +22,8 @@ test = [
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+# Code blocks in docs are illustrative snippets, not runnable modules
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
@@ -63,17 +65,27 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["custom_components.tuya_ble_mesh.config_flow"]
-disable_error_code = ["return-value"]
+disable_error_code = ["return-value", "misc"]
 
 [[tool.mypy.overrides]]
 # HA entity base-classes are Any when follow_imports=skip; subclassing Any is unavoidable
 module = [
+    "custom_components.tuya_ble_mesh.binary_sensor",
+    "custom_components.tuya_ble_mesh.button",
+    "custom_components.tuya_ble_mesh.config_flow_options",
+    "custom_components.tuya_ble_mesh.entity",
     "custom_components.tuya_ble_mesh.light",
-    "custom_components.tuya_ble_mesh.switch",
-    "custom_components.tuya_ble_mesh.sensor",
     "custom_components.tuya_ble_mesh.repairs",
+    "custom_components.tuya_ble_mesh.sensor",
+    "custom_components.tuya_ble_mesh.switch",
+    "custom_components.tuya_ble_mesh.update",
 ]
 disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# HA's @callback is Any when follow_imports=skip
+module = ["custom_components.tuya_ble_mesh.logbook"]
+disable_error_code = ["untyped-decorator"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

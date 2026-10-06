@@ -13,8 +13,8 @@ Requires:
 """
 
 import asyncio
-import sys
 import logging
+import sys
 
 logging.basicConfig(level=logging.DEBUG)
 _LOGGER = logging.getLogger(__name__)
@@ -22,17 +22,19 @@ _LOGGER = logging.getLogger(__name__)
 # Add HA's python path to find habluetooth
 sys.path.insert(0, "/home/charlie/workspaces/tuya-ble-mesh/.venv/lib/python3.12/site-packages")
 
+
 async def test_bleak_client_type():
     """Verify that BleakClient is or can become HaBleakClientWrapper."""
     from bleak import BleakClient
 
-    print(f"\n=== BleakClient Type Check ===")
+    print("\n=== BleakClient Type Check ===")
     print(f"BleakClient: {BleakClient}")
     print(f"Module: {BleakClient.__module__}")
 
     # Check if HaBleakClientWrapper is available
     try:
         from habluetooth import HaBleakClientWrapper
+
         print(f"HaBleakClientWrapper: {HaBleakClientWrapper}")
         print(f"Is subclass: {issubclass(HaBleakClientWrapper, BleakClient)}")
     except ImportError as e:
@@ -41,10 +43,11 @@ async def test_bleak_client_type():
 
     return True
 
+
 async def test_establish_connection_with_wrapper():
     """Test establish_connection using HaBleakClientWrapper."""
-    from bleak_retry_connector import establish_connection
     from bleak.backends.device import BLEDevice
+    from bleak_retry_connector import establish_connection
 
     try:
         from habluetooth import HaBleakClientWrapper
@@ -52,15 +55,12 @@ async def test_establish_connection_with_wrapper():
         print("habluetooth not available, test cannot run in HA context")
         return False
 
-    print(f"\n=== Establish Connection Test ===")
+    print("\n=== Establish Connection Test ===")
 
     # Create a mock BLEDevice (won't actually connect, just test API)
     # In real usage, this comes from async_ble_device_from_address
     mock_device = BLEDevice(
-        address="E1:5C:9E:37:01:1F",
-        name="Mock Telink Device",
-        details={},
-        rssi=-60
+        address="E1:5C:9E:37:01:1F", name="Mock Telink Device", details={}, rssi=-60
     )
 
     print(f"Device: {mock_device.address}")
@@ -76,12 +76,12 @@ async def test_establish_connection_with_wrapper():
                 "E1:5C:9E:37:01:1F",
                 max_attempts=1,
             ),
-            timeout=5.0
+            timeout=5.0,
         )
         print(f"Connected: {client.is_connected}")
         await client.disconnect()
         return True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("Connection timeout (expected for mock device)")
         return True  # API works
     except Exception as e:
@@ -89,13 +89,13 @@ async def test_establish_connection_with_wrapper():
         # Even if connection fails, the API works if we got this far
         return "not found" in str(e).lower() or "timeout" in str(e).lower()
 
+
 async def test_sig_mesh_connect_patch():
     """Verify that sig_mesh_device.connect will use HaBleakClientWrapper after patch."""
-    print(f"\n=== SIG Mesh Connect Patch Test ===")
+    print("\n=== SIG Mesh Connect Patch Test ===")
 
     # Simulate what ble_adapter.py does
     import tuya_ble_mesh.sig_mesh_device as sig_mod
-    from bleak_retry_connector import establish_connection as raw_establish
 
     # Check original connect method
     original_connect = sig_mod.SIGMeshDevice.connect
@@ -103,19 +103,22 @@ async def test_sig_mesh_connect_patch():
 
     # Check if it references BleakClient
     import inspect
+
     source = inspect.getsource(original_connect)
     uses_bleak = "BleakClient" in source
     print(f"Original uses BleakClient: {uses_bleak}")
 
     # Now apply our patch (simulated)
     try:
-        from habluetooth import HaBleakClientWrapper
-        print(f"HaBleakClientWrapper available: True")
-        print(f"Patch will replace BleakClient with HaBleakClientWrapper")
+        from habluetooth import HaBleakClientWrapper  # noqa: F401  (availability check)
+
+        print("HaBleakClientWrapper available: True")
+        print("Patch will replace BleakClient with HaBleakClientWrapper")
         return True
     except ImportError:
-        print(f"HaBleakClientWrapper NOT available - patch will use fallback")
+        print("HaBleakClientWrapper NOT available - patch will use fallback")
         return False
+
 
 async def main():
     """Run all tests."""
@@ -145,6 +148,7 @@ async def main():
     print(f"\nOverall: {'✓ ALL TESTS PASSED' if all_passed else '✗ SOME TESTS FAILED'}")
 
     return 0 if all_passed else 1
+
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

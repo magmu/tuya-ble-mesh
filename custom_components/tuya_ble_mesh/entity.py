@@ -46,4 +46,5 @@ class TuyaBLEMeshEntity(CoordinatorEntity["TuyaBLEMeshCoordinator"]):
     @property
     def available(self) -> bool:
         """Return True if the device is available."""
-        return self.coordinator.state.available
+        available: bool = self.coordinator.state.available
+        return available

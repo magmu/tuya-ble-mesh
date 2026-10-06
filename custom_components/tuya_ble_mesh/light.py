@@ -302,7 +302,8 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
     @property
     def is_on(self) -> bool:
         """Return True if the light is on."""
-        return self.coordinator.state.is_on
+        is_on: bool = self.coordinator.state.is_on
+        return is_on
 
     @property
     def brightness(self) -> int | None:
@@ -310,7 +311,8 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
         if not self.coordinator.state.is_on:
             return None
         if self.coordinator.state.mode == 1:
-            return self.coordinator.state.color_brightness
+            color_brightness: int | None = self.coordinator.state.color_brightness
+            return color_brightness
         return brightness_to_ha(self.coordinator.state.brightness)
 
     @property

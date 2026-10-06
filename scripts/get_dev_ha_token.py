@@ -2,7 +2,9 @@
 """Create a long-lived HA token via Playwright UI automation.
 Saves token to /tmp/dev_ha_token (not displayed).
 """
+
 import asyncio
+
 from playwright.async_api import async_playwright
 
 HA_URL = "http://192.168.9.10:8123"
@@ -23,7 +25,9 @@ async def main() -> None:
         page = await browser.new_page()
 
         # Login
-        await page.goto(f"{HA_URL}/auth/authorize?response_type=code&client_id={HA_URL}/&redirect_uri={HA_URL}/")
+        await page.goto(
+            f"{HA_URL}/auth/authorize?response_type=code&client_id={HA_URL}/&redirect_uri={HA_URL}/"
+        )
         await page.goto(HA_URL)
         await page.wait_for_load_state("networkidle")
 
@@ -47,7 +51,9 @@ async def main() -> None:
         try:
             # Click "Create token" button
             await page.click("text=Create Token", timeout=5000)
-            await page.wait_for_selector("input[placeholder*='name' i], input[placeholder*='Token' i]", timeout=5000)
+            await page.wait_for_selector(
+                "input[placeholder*='name' i], input[placeholder*='Token' i]", timeout=5000
+            )
             await page.fill("input", "thor-vm903-autotest")
             await page.click("mwc-button[label='OK'], button:has-text('OK')", timeout=5000)
             await page.wait_for_timeout(2000)
