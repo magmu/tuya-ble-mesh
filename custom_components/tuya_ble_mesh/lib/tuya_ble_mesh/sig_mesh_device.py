@@ -375,7 +375,8 @@ class SIGMeshDevice(SIGMeshDeviceCommandsMixin, SIGMeshDeviceSegmentsMixin):  # 
 
                 except (BleakError, MeshConnectionError, OSError) as exc:
                     last_error = exc
-                    _LOGGER.warning(
+                    # The caller reports the overall failure; per-attempt detail is debug
+                    _LOGGER.debug(
                         "Connection attempt %d failed for %s",
                         attempt,
                         self._address,

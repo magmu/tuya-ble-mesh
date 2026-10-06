@@ -34,6 +34,7 @@ CONF_UNICAST_TARGET = "unicast_target"
 CONF_UNICAST_OUR = "unicast_our"
 CONF_OP_ITEM_PREFIX = "op_item_prefix"
 CONF_IV_INDEX = "iv_index"
+CONF_SOLAR_POWERED = "solar_powered"
 CONF_BRIDGE_HOST = "bridge_host"
 CONF_BRIDGE_PORT = "bridge_port"
 

@@ -158,6 +158,9 @@
     "switch": {
       "mesh_switch": {
         "name": "Switch"
+      },
+      "solar_powered": {
+        "name": "Solar powered"
       }
     },
     "sensor": {

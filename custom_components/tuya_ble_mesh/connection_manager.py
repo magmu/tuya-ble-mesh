@@ -8,6 +8,7 @@ command retry. Extracted from coordinator.py (PLAT-667).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import statistics
 import time
@@ -44,6 +45,10 @@ BRIDGE_MAX_BACKOFF = 120.0
 # Reconnect storm detection
 STORM_WINDOW_SECONDS = 300  # 5 minutes
 STORM_DEFAULT_THRESHOLD = 10
+
+# Devices that stop advertising (e.g. solar lights that sleep in daylight)
+ABSENT_RECHECK_SECONDS = 600.0  # fallback re-check; an advertisement wakes us sooner
+REPAIR_AFTER_FAILURES = 5  # failed attempts while advertising before raising a repair
 
 # Max consecutive reconnect failures before giving up (0 = unlimited)
 DEFAULT_MAX_RECONNECT_FAILURES = 0
@@ -141,6 +146,11 @@ class ConnectionManager:
         self._running = False
         self._backoff = INITIAL_BACKOFF
         self._reconnect_task: asyncio.Task[None] | None = None
+        self._waiting_for_advert = False
+        self._absent_checks = 0
+        # Returns True while being offline is normal (e.g. a solar light by day)
+        self.expected_offline: Callable[[], bool] | None = None
+        self._advert_event: asyncio.Event | None = None
         self._rssi_task: asyncio.Task[None] | None = None
 
         # Statistics
@@ -245,7 +255,7 @@ class ConnectionManager:
 
         Called by the coordinator's _on_disconnect callback.
         """
-        _LOGGER.warning("Device disconnected: %s", self._device.address)
+        _LOGGER.info("Device disconnected: %s", self._device.address)
 
         # Update connection statistics
         if self._stats.connect_time is not None:
@@ -295,6 +305,56 @@ class ConnectionManager:
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
         self._reconnect_task.add_done_callback(self._log_task_exception)
 
+    @property
+    def waiting_for_advertisement(self) -> bool:
+        """True while the device is not advertising and reconnects are paused."""
+        return self._waiting_for_advert
+
+    def notify_advertisement(self) -> None:
+        """React to an advertisement from the device.
+
+        Wakes a reconnect loop that is waiting for the device to come back, or
+        starts one if none is running. A loop already backing off is left alone
+        so a device that advertises but refuses connections still backs off.
+        """
+        if not self._running:
+            return
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self.schedule_reconnect()
+        elif self._waiting_for_advert and self._advert_event is not None:
+            self._advert_event.set()
+
+    def _offline_expected(self) -> bool:
+        if self.expected_offline is None:
+            return False
+        try:
+            return bool(self.expected_offline())
+        except Exception:
+            _LOGGER.debug("expected_offline check failed", exc_info=True)
+            return False
+
+    def _device_advertising(self) -> bool:
+        """Return False only when HA's Bluetooth stack has lost track of the device."""
+        if self._hass is None:
+            return True
+        try:
+            from homeassistant.components.bluetooth import async_address_present
+        except ImportError:
+            return True
+        try:
+            return bool(async_address_present(self._hass, self._device.address, connectable=True))
+        except Exception:
+            _LOGGER.debug("Bluetooth presence check failed", exc_info=True)
+            return True
+
+    async def _wait_for_advertisement(self, timeout: float) -> None:
+        """Sleep until the device advertises again or the timeout passes."""
+        if self._advert_event is None:
+            self._advert_event = asyncio.Event()
+        self._advert_event.clear()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._advert_event.wait(), timeout)
+
     async def _reconnect_loop(self) -> None:
         """Attempt reconnection with exponential backoff.
 
@@ -313,6 +373,7 @@ class ConnectionManager:
 
         is_bridge = self.is_bridge_device()
         max_backoff = BRIDGE_MAX_BACKOFF if is_bridge else MAX_BACKOFF
+        skip_backoff = False
 
         while self._running:
             # Check max reconnect failure limit
@@ -329,17 +390,47 @@ class ConnectionManager:
                     self._on_state_update()
                 return
 
-            _LOGGER.info(
-                "Reconnecting to %s in %.0fs (attempt %d%s)",
-                self._device.address,
-                self._backoff,
-                self._consecutive_failures + 1,
-                ", bridge" if is_bridge else "",
-            )
-            await asyncio.sleep(self._backoff)
+            if not skip_backoff:
+                _LOGGER.info(
+                    "Reconnecting to %s in %.0fs (attempt %d%s)",
+                    self._device.address,
+                    self._backoff,
+                    self._consecutive_failures + 1,
+                    ", bridge" if is_bridge else "",
+                )
+                await asyncio.sleep(self._backoff)
 
-            if not self._running:
-                break
+                if not self._running:
+                    break
+            skip_backoff = False
+
+            # A device that isn't advertising can't be connected to. Wait for it
+            # quietly instead of failing (and alerting) over and over.
+            if not is_bridge and not self._device_advertising():
+                expected = self._offline_expected()
+                self._absent_checks = 0 if expected else self._absent_checks + 1
+                if not self._waiting_for_advert:
+                    self._waiting_for_advert = True
+                    _LOGGER.info(
+                        "%s is not advertising (asleep or out of range); "
+                        "will reconnect when it is seen again",
+                        self._device.address,
+                    )
+                    if expected:
+                        self._clear_repair_issues_on_recovery()
+                if self._absent_checks >= 2:
+                    # Still missing when it should be awake (e.g. a solar light
+                    # after dark); one recheck first so HA startup doesn't alert
+                    self._maybe_create_repair_issue(ErrorClass.DEVICE_OFFLINE)
+                await self._wait_for_advertisement(ABSENT_RECHECK_SECONDS)
+                skip_backoff = True
+                continue
+            self._absent_checks = 0
+            if self._waiting_for_advert:
+                self._waiting_for_advert = False
+                self._consecutive_failures = 0
+                self._backoff = INITIAL_BACKOFF
+                _LOGGER.info("%s is advertising again; reconnecting", self._device.address)
 
             try:
                 start_time = time.monotonic()
@@ -378,13 +469,18 @@ class ConnectionManager:
                 self._stats.last_error_class = error_class.value
                 self._stats.reconnect_times.append(time.time())
 
-                _LOGGER.warning(
-                    "Reconnect failed for %s (class=%s, consecutive=%d)",
+                expected = self._offline_expected()
+                _LOGGER.log(
+                    logging.WARNING
+                    if self._consecutive_failures == 1 and not expected
+                    else logging.DEBUG,
+                    "Reconnect failed for %s (class=%s, consecutive=%d): %s",
                     self._device.address,
                     error_class.value,
                     self._consecutive_failures,
-                    exc_info=True,
+                    err,
                 )
+                _LOGGER.debug("Reconnect failure details", exc_info=True)
 
                 # Permanent errors should not retry
                 if error_class == ErrorClass.PERMANENT:
@@ -396,12 +492,14 @@ class ConnectionManager:
                         self._on_state_update()
                     return
 
-                self._maybe_create_repair_issue(error_class)
+                if self._consecutive_failures >= REPAIR_AFTER_FAILURES and not expected:
+                    self._maybe_create_repair_issue(error_class)
 
                 # Detect reconnect storm
                 if (
                     self._hass is not None
                     and self._entry_id is not None
+                    and not expected
                     and self._check_reconnect_storm()
                     and not self._stats.storm_detected
                 ):

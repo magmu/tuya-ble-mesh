@@ -31,6 +31,7 @@ from homeassistant.exceptions import (
 from custom_components.tuya_ble_mesh.const import (
     CONF_DEVICE_TYPE,
     CONF_MAC_ADDRESS,
+    CONF_SOLAR_POWERED,
     CONF_VENDOR_ID,
     DEVICE_MODEL_NAMES,
     DOMAIN,
@@ -63,6 +64,8 @@ class TuyaBLEMeshRuntimeData:
     device_info: DeviceInfo
     cancel_listeners: list[Callable[[], None]] = field(default_factory=list)
     registry: TuyaBLEMeshDeviceRegistry | None = None
+    # Options (other than the live solar setting) the entry was loaded with
+    reload_options: dict[str, Any] = field(default_factory=dict)
 
 
 # Type alias for typed config entry access in platform files.
@@ -103,7 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
         # PLAT-737: connectable=True signals HA to pause scanning during connect
         device = async_ble_device_from_address(hass, address, connectable=True)
         if device is None:
-            _LOGGER.warning("BLE device %s not found via HA bluetooth stack", address)
+            _LOGGER.debug("BLE device %s not found via HA bluetooth stack", address)
         else:
             _LOGGER.debug("BLE device %s resolved via HA bluetooth stack", address)
         return device
@@ -170,13 +173,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
         coordinator=coordinator,
         device_info=device_info,
         registry=registry,
+        reload_options={k: v for k, v in entry.options.items() if k != CONF_SOLAR_POWERED},
     )
 
     # PLAT-743: Try initial connection synchronously during setup.
     # If it fails, raise ConfigEntryNotReady to let HA Core handle retry scheduling.
     # This gives HA visibility into integration health and proper retry state in UI.
     try:
-        await coordinator.async_initial_connect()
+        if _device_absent(hass, mac_address):
+            # Asleep or out of range (e.g. a solar light in daylight): load now and
+            # connect on its next advertisement instead of failing setup repeatedly.
+            await coordinator.async_start_waiting()
+        else:
+            await coordinator.async_initial_connect()
     except Exception as err:
         # Classify error to determine if it's auth or connection failure
         from custom_components.tuya_ble_mesh.error_classifier import ErrorClass
@@ -248,13 +257,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
             change: BluetoothChange,
         ) -> None:
             if not coordinator.state.available:
-                # PLAT-759: Routine reconnect trigger at DEBUG level
-                _LOGGER.debug(
-                    "BLE device %s reappeared (RSSI: %s) — triggering reconnect",
-                    service_info.address,
-                    service_info.rssi,
-                )
-                coordinator.schedule_reconnect()
+                coordinator.notify_advertisement()
 
         entry.async_on_unload(
             async_register_callback(
@@ -271,6 +274,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
     # PLAT-759: Routine setup completion at DEBUG level
     _LOGGER.debug("Tuya BLE Mesh entry set up: %s", entry.title)
     return True
+
+
+def _device_absent(hass: HomeAssistant, address: str) -> bool:
+    """Return True when HA's Bluetooth stack has no recent advertisement from the device."""
+    try:
+        from homeassistant.components.bluetooth import async_address_present
+    except ImportError:
+        return False
+    try:
+        return not async_address_present(hass, address, connectable=True)
+    except Exception:
+        _LOGGER.debug("Bluetooth presence check failed for %s", address, exc_info=True)
+        return False
 
 
 async def _async_register_services(hass: HomeAssistant) -> None:
@@ -450,7 +466,16 @@ def _get_coordinator_for_device(
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) -> None:
-    """Reload entry when options change."""
+    """Reload entry when options change.
+
+    The solar-powered setting is applied live by its switch, so changing only
+    that option doesn't reconnect the device.
+    """
+    runtime = getattr(entry, "runtime_data", None)
+    if runtime is not None:
+        other_options = {k: v for k, v in entry.options.items() if k != CONF_SOLAR_POWERED}
+        if other_options == runtime.reload_options:
+            return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
