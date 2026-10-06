@@ -26,6 +26,7 @@ from tuya_ble_mesh.sig_mesh_protocol import (
     CompositionData,
     decrypt_access_payload,
     decrypt_network_pdu,
+    describe_light_status,
     parse_access_opcode,
     parse_composition_data,
     parse_proxy_pdu,
@@ -374,6 +375,8 @@ class SIGMeshDeviceSegmentsMixin:
                     raise
                 except Exception:
                     _LOGGER.warning("Vendor callback error", exc_info=True)
+        elif (light_status := describe_light_status(opcode, params)) is not None:
+            _LOGGER.info("%s from 0x%04X", light_status, src)
         else:
             _LOGGER.debug(
                 "Received opcode 0x%04X (%d param bytes) from 0x%04X",

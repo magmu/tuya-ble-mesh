@@ -70,10 +70,15 @@ OP_GENERIC_ONOFF_SET = 0x8202
 OP_GENERIC_ONOFF_STATUS = 0x8204
 
 # --- Light model opcodes (Mesh Model 6.3) ---
+OP_LIGHT_LIGHTNESS_GET = 0x824B
 OP_LIGHT_LIGHTNESS_SET = 0x824C
 OP_LIGHT_LIGHTNESS_STATUS = 0x824E
+OP_LIGHT_CTL_GET = 0x825D
 OP_LIGHT_CTL_SET = 0x825E
 OP_LIGHT_CTL_STATUS = 0x8260
+OP_LIGHT_CTL_TEMP_RANGE_GET = 0x8262
+OP_LIGHT_CTL_TEMP_RANGE_STATUS = 0x8263
+OP_LIGHT_HSL_GET = 0x826D
 OP_LIGHT_HSL_SET = 0x8276
 OP_LIGHT_HSL_STATUS = 0x8278
 
@@ -295,6 +300,38 @@ def light_hsl_set(lightness: int, hue: int, saturation: int, tid: int = 0) -> by
     return struct.pack(">H", OP_LIGHT_HSL_SET) + struct.pack(
         "<HHHB", lightness, hue, saturation, tid & 0xFF
     )
+
+
+def light_state_gets() -> list[bytes]:
+    """Get messages for the node's lightness, CTL, CTL temperature range and HSL state."""
+    return [
+        struct.pack(">H", op)
+        for op in (
+            OP_LIGHT_LIGHTNESS_GET,
+            OP_LIGHT_CTL_GET,
+            OP_LIGHT_CTL_TEMP_RANGE_GET,
+            OP_LIGHT_HSL_GET,
+        )
+    ]
+
+
+def describe_light_status(opcode: int, params: bytes) -> str | None:
+    """Return a readable summary of a Light status message, or None if not one."""
+    if opcode == OP_LIGHT_LIGHTNESS_STATUS and len(params) >= 2:
+        (lightness,) = struct.unpack_from("<H", params)
+        return f"Light Lightness Status: lightness={lightness}"
+    if opcode == OP_LIGHT_CTL_STATUS and len(params) >= 4:
+        lightness, temperature = struct.unpack_from("<HH", params)
+        return f"Light CTL Status: lightness={lightness} temperature={temperature}K"
+    if opcode == OP_LIGHT_CTL_TEMP_RANGE_STATUS and len(params) >= 5:
+        status, range_min, range_max = struct.unpack_from("<BHH", params)
+        return (
+            f"Light CTL Temperature Range Status: status={status} min={range_min}K max={range_max}K"
+        )
+    if opcode == OP_LIGHT_HSL_STATUS and len(params) >= 6:
+        lightness, hue, saturation = struct.unpack_from("<HHH", params)
+        return f"Light HSL Status: lightness={lightness} hue={hue} saturation={saturation}"
+    return None
 
 
 # ============================================================

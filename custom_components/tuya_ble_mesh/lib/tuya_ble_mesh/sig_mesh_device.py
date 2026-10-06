@@ -362,6 +362,10 @@ class SIGMeshDevice(SIGMeshDeviceCommandsMixin, SIGMeshDeviceSegmentsMixin):  # 
                         await self.request_onoff_state()
                     except (SIGMeshError, BleakError):
                         _LOGGER.debug("OnOff state request failed (non-critical)", exc_info=True)
+                    try:
+                        await self.request_light_state()
+                    except (SIGMeshError, BleakError):
+                        _LOGGER.debug("Light state request failed (non-critical)", exc_info=True)
                     return
 
                 except (BleakError, MeshConnectionError, OSError) as exc:
