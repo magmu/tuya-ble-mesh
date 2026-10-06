@@ -635,6 +635,8 @@ _SIG_MODEL_LIGHT_HSL_SERVER = 0x1307
 _SIG_U16_MAX = 0xFFFF
 _SIG_CTL_KELVIN_MIN = 800
 _SIG_CTL_KELVIN_MAX = 20000
+_SIG_HA_KELVIN_MIN = 2700
+_SIG_HA_KELVIN_MAX = 6500
 _SIG_DEFAULT_KELVIN = 4000
 
 
@@ -642,6 +644,17 @@ def sig_lightness_from_ha(brightness: int) -> int:
     """Convert HA brightness (0-255) to SIG Light Lightness (0-65535)."""
     clamped = max(0, min(brightness, HA_BRIGHTNESS_MAX))
     return round(clamped * _SIG_U16_MAX / HA_BRIGHTNESS_MAX)
+
+
+def sig_ctl_temp_from_ha(kelvin: int) -> int:
+    """Map HA's kelvin slider onto the node's full CTL temperature range.
+
+    Telink SIG firmware spreads warm-to-cool white across the whole 800-20000 K
+    CTL range, so sending HA's 2700-6500 K directly only reaches the warm end.
+    """
+    span = _SIG_HA_KELVIN_MAX - _SIG_HA_KELVIN_MIN
+    ratio = (max(_SIG_HA_KELVIN_MIN, min(kelvin, _SIG_HA_KELVIN_MAX)) - _SIG_HA_KELVIN_MIN) / span
+    return round(_SIG_CTL_KELVIN_MIN + ratio * (_SIG_CTL_KELVIN_MAX - _SIG_CTL_KELVIN_MIN))
 
 
 def sig_hsl_from_ha(hs_color: tuple[float, float], brightness: int) -> tuple[int, int, int]:
@@ -681,8 +694,8 @@ class TuyaBLEMeshSIGLight(TuyaBLEMeshEntity, LightEntity):
     _attr_should_poll = False
     _attr_name = None  # Use device name as entity name
     _attr_unique_id: str
-    _attr_min_color_temp_kelvin = 2700
-    _attr_max_color_temp_kelvin = 6500
+    _attr_min_color_temp_kelvin = _SIG_HA_KELVIN_MIN
+    _attr_max_color_temp_kelvin = _SIG_HA_KELVIN_MAX
 
     def __init__(
         self,
@@ -742,10 +755,13 @@ class TuyaBLEMeshSIGLight(TuyaBLEMeshEntity, LightEntity):
                 self._attr_color_mode = ColorMode.HS
             elif ATTR_COLOR_TEMP_KELVIN in kwargs and ColorMode.COLOR_TEMP in modes:
                 kelvin = max(
-                    _SIG_CTL_KELVIN_MIN, min(kwargs[ATTR_COLOR_TEMP_KELVIN], _SIG_CTL_KELVIN_MAX)
+                    _SIG_HA_KELVIN_MIN, min(kwargs[ATTR_COLOR_TEMP_KELVIN], _SIG_HA_KELVIN_MAX)
                 )
                 lightness = sig_lightness_from_ha(brightness)
-                await self._send(lambda: device.send_light_ctl(lightness, kelvin), "send_light_ctl")
+                ctl_temp = sig_ctl_temp_from_ha(kelvin)
+                await self._send(
+                    lambda: device.send_light_ctl(lightness, ctl_temp), "send_light_ctl"
+                )
                 self._attr_color_temp_kelvin = kelvin
                 self._attr_color_mode = ColorMode.COLOR_TEMP
             elif ATTR_BRIGHTNESS in kwargs and ColorMode.ONOFF not in modes:

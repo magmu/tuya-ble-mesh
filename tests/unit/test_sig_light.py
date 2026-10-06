@@ -54,6 +54,7 @@ from custom_components.tuya_ble_mesh.device_factory import _DEVICE_CREATORS  # n
 from custom_components.tuya_ble_mesh.light import (  # noqa: E402
     TuyaBLEMeshSIGLight,
     sig_color_modes,
+    sig_ctl_temp_from_ha,
     sig_hsl_from_ha,
     sig_lightness_from_ha,
 )
@@ -303,6 +304,13 @@ class TestConversions:
         assert sig_lightness_from_ha(255) == 0xFFFF
         assert sig_lightness_from_ha(0) == 0
 
+    def test_ctl_temp_spans_full_node_range(self) -> None:
+        assert sig_ctl_temp_from_ha(2700) == 800
+        assert sig_ctl_temp_from_ha(6500) == 20000
+        assert sig_ctl_temp_from_ha(4600) == 10400
+        assert sig_ctl_temp_from_ha(1000) == 800
+        assert sig_ctl_temp_from_ha(9000) == 20000
+
     def test_hsl_red_full_brightness(self) -> None:
         lightness, hue, saturation = sig_hsl_from_ha((0.0, 100.0), 255)
         assert (lightness, hue, saturation) == (0x7FFF, 0, 0xFFFF)
@@ -363,7 +371,9 @@ class TestSIGLightEntity:
     async def test_color_temp_sends_ctl(self) -> None:
         light, coord = _make_light(_ALL_LIGHT_MODELS)
         await light.async_turn_on(color_temp_kelvin=3000, brightness=128)
-        coord.device.send_light_ctl.assert_awaited_once_with(sig_lightness_from_ha(128), 3000)
+        coord.device.send_light_ctl.assert_awaited_once_with(
+            sig_lightness_from_ha(128), sig_ctl_temp_from_ha(3000)
+        )
         assert light.color_temp_kelvin == 3000
         assert light.brightness == 128
 
