@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?logo=homeassistantcommunitystore)](https://github.com/hacs/integration)
 [![CI](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml/badge.svg)](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.42.10-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.42.11-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HA 2024.1+](https://img.shields.io/badge/HA-2024.1%2B-blue.svg)](https://www.home-assistant.io)
 [![Tests](https://img.shields.io/badge/tests-2300%20passing-brightgreen.svg)](https://github.com/magmu/tuya-ble-mesh/actions)
