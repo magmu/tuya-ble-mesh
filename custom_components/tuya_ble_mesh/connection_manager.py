@@ -324,6 +324,19 @@ class ConnectionManager:
         elif self._waiting_for_advert and self._advert_event is not None:
             self._advert_event.set()
 
+    def offline_expectation_changed(self) -> None:
+        """Re-evaluate alerts after the solar setting changes.
+
+        Clears connection repairs right away when being offline is now expected,
+        and wakes a waiting reconnect loop so it re-checks with the new setting.
+        """
+        if not self._running or self._reconnect_task is None or self._reconnect_task.done():
+            return
+        if self._offline_expected():
+            self._clear_repair_issues_on_recovery()
+        if self._waiting_for_advert and self._advert_event is not None:
+            self._advert_event.set()
+
     def _offline_expected(self) -> bool:
         if self.expected_offline is None:
             return False
@@ -416,8 +429,8 @@ class ConnectionManager:
                         "will reconnect when it is seen again",
                         self._device.address,
                     )
-                    if expected:
-                        self._clear_repair_issues_on_recovery()
+                if expected:
+                    self._clear_repair_issues_on_recovery()
                 if self._absent_checks >= 2:
                     # Still missing when it should be awake (e.g. a solar light
                     # after dark); one recheck first so HA startup doesn't alert

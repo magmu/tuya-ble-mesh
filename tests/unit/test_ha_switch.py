@@ -270,7 +270,7 @@ class TestSolarSwitch:
     async def test_turn_on_saves_option(self) -> None:
         switch, hass, entry = self._make()
         await switch.async_turn_on()
-        assert switch.is_on is True
+        switch._coordinator.set_solar_powered.assert_called_once_with(True)
         hass.config_entries.async_update_entry.assert_called_once_with(
             entry, options={"other": 1, "solar_powered": True}
         )
@@ -279,7 +279,7 @@ class TestSolarSwitch:
     async def test_turn_off_saves_option(self) -> None:
         switch, hass, entry = self._make(solar=True)
         await switch.async_turn_off()
-        assert switch.is_on is False
+        switch._coordinator.set_solar_powered.assert_called_once_with(False)
         hass.config_entries.async_update_entry.assert_called_once_with(
             entry, options={"other": 1, "solar_powered": False}
         )

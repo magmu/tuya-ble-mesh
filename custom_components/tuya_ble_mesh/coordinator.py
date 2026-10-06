@@ -170,6 +170,11 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         )
         self._conn_mgr.expected_offline = self._expected_offline
 
+    def set_solar_powered(self, value: bool) -> None:
+        """Change the solar setting and apply it to alerts immediately."""
+        self.solar_powered = value
+        self._conn_mgr.offline_expectation_changed()
+
     def _expected_offline(self) -> bool:
         """Solar devices sleep while it's light out, so being offline then is normal."""
         if not self.solar_powered or self._hass is None:
@@ -827,6 +832,15 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             elif dp.dp_id == DP_ID_ENERGY_KWH and len(dp.value) >= 1:
                 energy_kwh = int.from_bytes(dp.value, "big") / 100.0
                 updated = True
+            else:
+                # Unmapped data point; logged so new ones (e.g. battery) can be identified
+                _LOGGER.info(
+                    "Tuya data point %d (type %d) = %s from %s",
+                    dp.dp_id,
+                    dp.dp_type,
+                    dp.value.hex(),
+                    self._device.address,
+                )
         if updated:
             now = time.time()
             cd = dict(self._state.last_confirmed_state)

@@ -207,3 +207,33 @@ async def test_solar_toggle_does_not_reload_entry() -> None:
     entry.options = {"solar_powered": True, "iv_index": 2}
     await _async_update_listener(hass, entry)
     hass.config_entries.async_reload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_turning_solar_on_clears_repairs_while_offline() -> None:
+    mgr, _device = _make_manager([False])
+    expected = [False]
+    mgr.expected_offline = lambda: expected[0]
+    with (
+        patch.object(cm.asyncio, "sleep", _fast_sleep),
+        patch.object(cm, "ABSENT_RECHECK_SECONDS", 60.0),
+    ):
+        mgr.schedule_reconnect()
+        await _settle()
+        assert mgr.waiting_for_advertisement is True
+        mgr._clear_repair_issues_on_recovery.reset_mock()
+
+        expected[0] = True
+        mgr.offline_expectation_changed()
+        mgr._clear_repair_issues_on_recovery.assert_called()
+
+        mgr.running = False
+        assert mgr._reconnect_task is not None
+        mgr._reconnect_task.cancel()
+
+
+def test_expectation_change_ignored_when_connected() -> None:
+    mgr, _device = _make_manager([True])
+    mgr.expected_offline = lambda: True
+    mgr.offline_expectation_changed()
+    mgr._clear_repair_issues_on_recovery.assert_not_called()
