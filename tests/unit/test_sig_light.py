@@ -169,6 +169,12 @@ class TestDeviceLightCommands:
         dev._client.write_gatt_char.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_request_light_state_sends_four_gets(self) -> None:
+        dev = _make_device()
+        await dev.request_light_state()
+        assert dev._client.write_gatt_char.await_count == 4
+
+    @pytest.mark.asyncio
     async def test_tid_increments(self) -> None:
         dev = _make_device()
         start = dev._tid
@@ -442,3 +448,42 @@ class TestCreateSIGDevice:
         )
         assert isinstance(device, SIGMeshDevice)
         assert device.address == "AA:BB:CC:DD:EE:FF"
+
+
+class TestDescribeLightStatus:
+    def test_ctl_status(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import describe_light_status
+
+        params = struct.pack("<HH", 0x8000, 6500)
+        assert describe_light_status(0x8260, params) == (
+            "Light CTL Status: lightness=32768 temperature=6500K"
+        )
+
+    def test_ctl_temp_range_status(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import describe_light_status
+
+        params = struct.pack("<BHH", 0, 800, 20000)
+        assert describe_light_status(0x8263, params) == (
+            "Light CTL Temperature Range Status: status=0 min=800K max=20000K"
+        )
+
+    def test_hsl_and_lightness_status(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import describe_light_status
+
+        assert describe_light_status(0x8278, struct.pack("<HHH", 1, 2, 3)) == (
+            "Light HSL Status: lightness=1 hue=2 saturation=3"
+        )
+        assert describe_light_status(0x824E, struct.pack("<H", 7)) == (
+            "Light Lightness Status: lightness=7"
+        )
+
+    def test_other_or_short_returns_none(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import describe_light_status
+
+        assert describe_light_status(0x8204, b"\x01") is None
+        assert describe_light_status(0x8260, b"\x00") is None
+
+    def test_state_gets_opcodes(self) -> None:
+        from tuya_ble_mesh.sig_mesh_protocol import light_state_gets
+
+        assert light_state_gets() == [b"\x82\x4b", b"\x82\x5d", b"\x82\x62", b"\x82\x6d"]

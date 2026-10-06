@@ -48,6 +48,7 @@ from tuya_ble_mesh.sig_mesh_protocol import (
     light_ctl_set,
     light_hsl_set,
     light_lightness_set,
+    light_state_gets,
     make_access_segmented,
     make_access_unsegmented,
     make_proxy_pdu,
@@ -308,6 +309,14 @@ class SIGMeshDeviceCommandsMixin:
     async def request_onoff_state(self) -> None:
         """Send Generic OnOff Get; the node's OnOff Status reaches the onoff callbacks."""
         await self._send_app_message(generic_onoff_get(), "Generic OnOff Get")
+
+    async def request_light_state(self) -> None:
+        """Ask the node for its lightness, CTL, CTL temperature range and HSL state.
+
+        The replies are logged at INFO by the notification handler.
+        """
+        for access_payload in light_state_gets():
+            await self._send_app_message(access_payload, "Light state Get")
 
     async def send_light_ctl(self, lightness: int, temperature: int) -> None:
         """Send Light CTL Set (lightness 0..0xFFFF, temperature in kelvin)."""
