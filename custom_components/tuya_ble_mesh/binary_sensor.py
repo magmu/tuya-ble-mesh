@@ -78,4 +78,5 @@ class TuyaBLEMeshConnectivitySensor(TuyaBLEMeshEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return True when BLE connection is active."""
-        return self.coordinator.state.available
+        available: bool = self.coordinator.state.available
+        return available

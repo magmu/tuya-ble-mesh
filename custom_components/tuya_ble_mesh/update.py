@@ -65,7 +65,8 @@ class TuyaBLEMeshFirmwareUpdateEntity(TuyaBLEMeshEntity, UpdateEntity):
     @property
     def installed_version(self) -> str | None:
         """Return the currently-installed firmware version, or None if unknown."""
-        return self.coordinator.state.firmware_version
+        version: str | None = self.coordinator.state.firmware_version
+        return version
 
     @property
     def latest_version(self) -> str | None:
@@ -75,7 +76,8 @@ class TuyaBLEMeshFirmwareUpdateEntity(TuyaBLEMeshEntity, UpdateEntity):
         and hide the entity when both are None. Returning None here means HA
         will show the installed version but without an 'update available' badge.
         """
-        return self.coordinator.state.firmware_version
+        version: str | None = self.coordinator.state.firmware_version
+        return version
 
     @property
     def release_notes(self) -> str | None:

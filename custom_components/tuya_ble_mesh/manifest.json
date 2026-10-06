@@ -1,18 +1,6 @@
 {
   "domain": "tuya_ble_mesh",
   "name": "Tuya BLE Mesh",
-  "version": "0.41.2",
-  "integration_type": "device",
-  "documentation": "https://github.com/11z4t/tuya-ble-mesh",
-  "issue_tracker": "https://github.com/11z4t/tuya-ble-mesh/issues",
-  "codeowners": [
-    "@11z4t"
-  ],
-  "config_flow": true,
-  "iot_class": "local_push",
-  "loggers": [
-    "tuya_ble_mesh"
-  ],
   "bluetooth": [
     {
       "local_name": "out_of_mesh*"
@@ -25,15 +13,23 @@
       "connectable": true
     }
   ],
+  "codeowners": [
+    "@11z4t"
+  ],
+  "config_flow": true,
   "dependencies": [
     "bluetooth"
   ],
-  "bluetooth_adapters": [
-    "esphome"
+  "documentation": "https://github.com/11z4t/tuya-ble-mesh",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/11z4t/tuya-ble-mesh/issues",
+  "loggers": [
+    "tuya_ble_mesh"
   ],
   "requirements": [
     "bleak>=0.21",
-    "bleak-retry-connector>=3.0",
-    "cryptography>=42.0"
-  ]
+    "bleak-retry-connector>=3.0"
+  ],
+  "version": "0.42.2"
 }

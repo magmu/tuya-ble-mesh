@@ -47,6 +47,7 @@ MESH_PASSWORD = b"123456"
 # MESH_NAME = b"your_mesh_name"
 # MESH_PASSWORD = b"your_password"
 
+
 async def main():
     """Test pairing and command flow."""
     _LOGGER.info("=" * 80)
@@ -72,8 +73,10 @@ async def main():
         _LOGGER.info("Step 1: Connecting and pairing...")
         async with device:
             _LOGGER.info("✓ Connection and pairing successful")
-            _LOGGER.info("Session key established: %d bytes [REDACTED]",
-                        len(device._conn.session_key) if device._conn.session_key else 0)
+            _LOGGER.info(
+                "Session key established: %d bytes [REDACTED]",
+                len(device._conn.session_key) if device._conn.session_key else 0,
+            )
 
             # Wait a bit after pairing
             _LOGGER.info("Waiting 2 seconds after pairing...")
@@ -124,6 +127,7 @@ async def main():
         return 1
 
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

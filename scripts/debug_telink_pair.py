@@ -18,11 +18,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
 from bleak import BleakClient, BleakScanner
 from tuya_ble_mesh.const import (
+    DP_TYPE_VALUE,
+    TELINK_CHAR_COMMAND,
     TELINK_CHAR_PAIRING,
     TELINK_CHAR_STATUS,
-    TELINK_CHAR_COMMAND,
     TELINK_CMD_STATUS_QUERY,
-    DP_TYPE_VALUE,
 )
 from tuya_ble_mesh.crypto import (
     generate_session_random,
@@ -30,9 +30,9 @@ from tuya_ble_mesh.crypto import (
     make_session_key,
 )
 from tuya_ble_mesh.protocol import (
-    parse_pair_response,
     encode_command_packet,
     encode_compact_dp,
+    parse_pair_response,
 )
 from tuya_ble_mesh.scanner import mac_to_bytes
 
@@ -88,7 +88,7 @@ async def debug_pairing(client: BleakClient) -> tuple[bytes, bytes] | None:
     pair_packet = make_pair_packet(MESH_NAME, MESH_PASSWORD, client_random)
     hexdump(pair_packet, "Pair packet (0x0C)")
 
-    _LOGGER.info(f"Pair packet structure: [0x0C][8B random][8B encrypted proof]")
+    _LOGGER.info("Pair packet structure: [0x0C][8B random][8B encrypted proof]")
     _LOGGER.info(f"  Opcode: 0x{pair_packet[0]:02X}")
     _LOGGER.info(f"  Random: {pair_packet[1:9].hex()}")
     _LOGGER.info(f"  Encrypted: {pair_packet[9:17].hex()}")
@@ -99,8 +99,7 @@ async def debug_pairing(client: BleakClient) -> tuple[bytes, bytes] | None:
 
     try:
         await asyncio.wait_for(
-            client.write_gatt_char(TELINK_CHAR_PAIRING, pair_packet, response=True),
-            timeout=10.0
+            client.write_gatt_char(TELINK_CHAR_PAIRING, pair_packet, response=True), timeout=10.0
         )
         _LOGGER.info("✓ Pair request write succeeded")
     except Exception as exc:
@@ -113,8 +112,7 @@ async def debug_pairing(client: BleakClient) -> tuple[bytes, bytes] | None:
 
     try:
         await asyncio.wait_for(
-            client.write_gatt_char(TELINK_CHAR_STATUS, b"\x01", response=True),
-            timeout=10.0
+            client.write_gatt_char(TELINK_CHAR_STATUS, b"\x01", response=True), timeout=10.0
         )
         _LOGGER.info("✓ Notification enable succeeded")
     except Exception as exc:
@@ -191,20 +189,19 @@ async def debug_command(
     )
 
     hexdump(packet, f"Command packet (opcode 0x{opcode:02X})")
-    _LOGGER.info(f"Packet structure: [3B seq][2B checksum][15B encrypted]")
+    _LOGGER.info("Packet structure: [3B seq][2B checksum][15B encrypted]")
     _LOGGER.info(f"  Sequence: {int.from_bytes(packet[0:3], 'little')}")
     _LOGGER.info(f"  Checksum: {packet[3:5].hex()}")
     _LOGGER.info(f"  Encrypted: {packet[5:20].hex()}")
-    _LOGGER.info(f"  Dest ID: 0xFFFF (broadcast)")
+    _LOGGER.info("  Dest ID: 0xFFFF (broadcast)")
     _LOGGER.info(f"  Opcode: 0x{opcode:02X}")
     hexdump(params, "  Params")
 
     try:
         await asyncio.wait_for(
-            client.write_gatt_char(TELINK_CHAR_COMMAND, packet, response=False),
-            timeout=5.0
+            client.write_gatt_char(TELINK_CHAR_COMMAND, packet, response=False), timeout=5.0
         )
-        _LOGGER.info(f"✓ Command write succeeded")
+        _LOGGER.info("✓ Command write succeeded")
         return True
     except Exception as exc:
         _LOGGER.error(f"✗ Command write failed: {type(exc).__name__}: {exc}")
@@ -245,7 +242,7 @@ async def main():
             _LOGGER.error("Pairing failed — stopping here")
             return 1
 
-        session_key, client_random = result
+        session_key, _client_random = result
         mac_bytes = mac_to_bytes(DEVICE_MAC)
 
         # Give device time to settle
@@ -258,8 +255,13 @@ async def main():
         _LOGGER.info("\n")
         params_status = b"\x10"  # Status query param
         success = await debug_command(
-            client, session_key, mac_bytes, sequence, TELINK_CMD_STATUS_QUERY,
-            params_status, "Status Query (0xDA)"
+            client,
+            session_key,
+            mac_bytes,
+            sequence,
+            TELINK_CMD_STATUS_QUERY,
+            params_status,
+            "Status Query (0xDA)",
         )
         if not success:
             _LOGGER.warning("Status query failed — continuing anyway")
@@ -271,11 +273,12 @@ async def main():
         _LOGGER.info("\n")
         params_on = encode_compact_dp(DP_POWER, DP_TYPE_VALUE, 1)
         hexdump(params_on, "Compact DP for power ON")
-        _LOGGER.info(f"  DP structure: [dp_id=0x{DP_POWER:02X}][type=0x{DP_TYPE_VALUE:02X}][len][value=1]")
+        _LOGGER.info(
+            f"  DP structure: [dp_id=0x{DP_POWER:02X}][type=0x{DP_TYPE_VALUE:02X}][len][value=1]"
+        )
 
         success = await debug_command(
-            client, session_key, mac_bytes, sequence, 0xD2,
-            params_on, "Power ON (0xD2 compact DP)"
+            client, session_key, mac_bytes, sequence, 0xD2, params_on, "Power ON (0xD2 compact DP)"
         )
         if not success:
             _LOGGER.error("Power ON command failed")
@@ -291,8 +294,13 @@ async def main():
         hexdump(params_off, "Compact DP for power OFF")
 
         success = await debug_command(
-            client, session_key, mac_bytes, sequence, 0xD2,
-            params_off, "Power OFF (0xD2 compact DP)"
+            client,
+            session_key,
+            mac_bytes,
+            sequence,
+            0xD2,
+            params_off,
+            "Power OFF (0xD2 compact DP)",
         )
         if not success:
             _LOGGER.error("Power OFF command failed")
@@ -308,8 +316,13 @@ async def main():
         hexdump(params_bright, "Compact DP for brightness 50%")
 
         success = await debug_command(
-            client, session_key, mac_bytes, sequence, 0xD2,
-            params_bright, "Brightness 50% (0xD2 compact DP)"
+            client,
+            session_key,
+            mac_bytes,
+            sequence,
+            0xD2,
+            params_bright,
+            "Brightness 50% (0xD2 compact DP)",
         )
         if not success:
             _LOGGER.error("Brightness command failed")

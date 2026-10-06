@@ -72,7 +72,8 @@ class TuyaBLEMeshSwitch(TuyaBLEMeshEntity, SwitchEntity):
     @property
     def is_on(self) -> bool:
         """Return True if the switch is on."""
-        return self.coordinator.state.is_on
+        is_on: bool = self.coordinator.state.is_on
+        return is_on
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on.

@@ -1,14 +1,14 @@
-name: Create GitHub Release
+name: Release
+
+# Publishes a GitHub release (which HACS offers as an update) whenever a merge
+# to main changes the integration version in manifest.json.
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    paths:
+      - custom_components/tuya_ble_mesh/manifest.json
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to create release for (e.g. v0.11.1)'
-        required: true
 
 permissions:
   contents: write
@@ -17,66 +17,21 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Determine tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
+      - uses: actions/checkout@v4
 
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.tag.outputs.tag }}
-          fetch-depth: 0
-
-      - name: Get previous tag
-        id: prev_tag
+      - name: Read version
+        id: version
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          PREV=$(git tag --sort=-version:refname | grep '^v' | grep -v "^${TAG}$" | head -1)
-          echo "tag=${PREV:-$(git rev-list --max-parents=0 HEAD)}" >> "$GITHUB_OUTPUT"
-
-      - name: Check if release exists
-        id: check
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
-          echo "exists=$([ "$STATUS" = "200" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
-      - name: Generate release notes
-        if: steps.check.outputs.exists == 'false'
-        id: notes
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          PREV="${{ steps.prev_tag.outputs.tag }}"
           VERSION=$(python3 -c "import json; print(json.load(open('custom_components/tuya_ble_mesh/manifest.json'))['version'])")
-          {
-            echo "notes<<NOTES_EOF"
-            echo "## Tuya BLE Mesh ${VERSION}"
-            echo ""
-            echo "### Changes"
-            echo ""
-            git log "${PREV}..${TAG}" --pretty=format:"- %s" --no-merges | grep -v "^- Merge" || echo "- Release ${TAG}"
-            echo ""
-            echo ""
-            echo "### Installation"
-            echo ""
-            echo "Install via [HACS](https://hacs.xyz) → Custom repositories → \`https://github.com/11z4t/tuya-ble-mesh\`"
-            echo ""
-            echo "Full documentation: [Wiki](https://github.com/11z4t/tuya-ble-mesh/wiki)"
-            echo "NOTES_EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
-        if: steps.check.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
-          body: ${{ steps.notes.outputs.notes }}
-          generate_release_notes: false
+      - name: Create release if the tag is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists, nothing to do"
+            exit 0
+          fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
