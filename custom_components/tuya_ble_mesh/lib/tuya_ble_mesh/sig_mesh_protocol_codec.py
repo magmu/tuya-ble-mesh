@@ -419,7 +419,7 @@ def parse_tuya_vendor_frame(params: bytes) -> TuyaVendorFrame:
     data = params[2:]
 
     if command == TUYA_CMD_TIMESTAMP_SYNC:
-        _LOGGER.debug("Tuya timestamp sync request (%d data bytes)", len(data))
+        _LOGGER.debug("Tuya timestamp sync request (data=%s)", data.hex())
         return TuyaVendorFrame(command=command, data=data, dps=[])
 
     if command == TUYA_CMD_DP_DATA:
@@ -444,8 +444,12 @@ def tuya_vendor_timestamp_response() -> bytes:
 
 
 def tuya_vendor_dp_query() -> bytes:
-    """Build a Tuya vendor READ payload asking the device to report all its DPs."""
-    return TUYA_VENDOR_READ.to_bytes(3, "big") + bytes([TUYA_CMD_DP_DATA, 0])
+    """Build a Tuya vendor READ payload asking the device to report all its DPs.
+
+    Frame: command 0x01 (DP data), length 1, DP id 0. Tuya's pass-through spec:
+    "If the received DPID is 0, the device reports all DP status".
+    """
+    return TUYA_VENDOR_READ.to_bytes(3, "big") + bytes([TUYA_CMD_DP_DATA, 1, 0])
 
 
 def parse_tuya_vendor_dps(params: bytes) -> list[TuyaVendorDP]:

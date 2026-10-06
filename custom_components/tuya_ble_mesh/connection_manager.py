@@ -678,25 +678,28 @@ class ConnectionManager:
                     break
 
                 try:
-                    ble_device = None
+                    rssi: int | None = None
 
                     if self._hass is not None:
+                        # Bleak 1.x BLEDevice has no rssi; HA keeps it on the
+                        # latest advertisement's service info
                         from homeassistant.components.bluetooth import (
-                            async_ble_device_from_address,
+                            async_last_service_info,
                         )
 
-                        ble_device = async_ble_device_from_address(
+                        service_info = async_last_service_info(
                             self._hass, self._device.address, connectable=False
                         )
+                        rssi = getattr(service_info, "rssi", None)
                     else:
                         from bleak import BleakScanner
 
                         ble_device = await BleakScanner.find_device_by_address(
                             self._device.address, timeout=10.0
                         )
+                        rssi = getattr(ble_device, "rssi", None)
 
-                    if ble_device is not None and ble_device.rssi is not None:
-                        rssi = ble_device.rssi
+                    if rssi is not None:
                         self._stats.rssi_history.append((time.time(), rssi))
                         # Return RSSI to coordinator via callback with special marker
                         if self._on_state_update:
