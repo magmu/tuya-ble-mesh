@@ -321,7 +321,7 @@ This document lists known limitations, constraints, and unsupported features of 
 
 If you discover a limitation not listed here:
 
-1. Check existing issues: [GitHub Issues](https://github.com/11z4t/tuya-ble-mesh/issues)
+1. Check existing issues: [GitHub Issues](https://github.com/magmu/tuya-ble-mesh/issues)
 2. Verify it's not a configuration issue: [Troubleshooting Guide](USER_GUIDE.md#troubleshooting)
 3. Report with details:
    - Device model and vendor

@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?logo=homeassistantcommunitystore)](https://github.com/hacs/integration)
 [![CI](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml/badge.svg)](https://github.com/magmu/tuya-ble-mesh/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.42.11-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.42.13-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HA 2024.1+](https://img.shields.io/badge/HA-2024.1%2B-blue.svg)](https://www.home-assistant.io)
 [![Tests](https://img.shields.io/badge/tests-2300%20passing-brightgreen.svg)](https://github.com/magmu/tuya-ble-mesh/actions)
@@ -125,9 +125,15 @@ Everything below was added for SIG Mesh lights reached through an ESPHome Blueto
 
 ### Via HACS (recommended)
 
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=magmu&repository=tuya-ble-mesh&category=integration)
+
+Click the button above to open this repository in HACS on your Home Assistant, then click **Download** and restart Home Assistant.
+
+Or add it by hand:
+
 1. Open **HACS** in Home Assistant
 2. Go to **Integrations** → three-dot menu → **Custom repositories**
-3. Add URL: `https://github.com/11z4t/tuya-ble-mesh`
+3. Add URL: `https://github.com/magmu/tuya-ble-mesh`
 4. Category: **Integration**
 5. Search for **"Tuya BLE Mesh"** and click **Download**
 6. **Restart Home Assistant**
@@ -263,7 +269,7 @@ The core library has no HA dependencies and can be used independently for script
 
 ```bash
 # Clone and set up virtual environment
-git clone https://github.com/11z4t/tuya-ble-mesh.git
+git clone https://github.com/magmu/tuya-ble-mesh.git
 cd tuya-ble-mesh
 python -m venv venv
 source venv/bin/activate
