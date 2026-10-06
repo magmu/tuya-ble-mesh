@@ -105,6 +105,9 @@ def _create_sig_plug(
 ) -> SIGMeshDevice:
     """Create a SIG Mesh direct device.
 
+    SIGMeshDevice connects through HA's patched BleakClient (which routes via
+    ESPHome proxies), so ble_connect_callback is not passed on.
+
     Raises:
         ValueError: If required SIG Mesh keys (net_key, dev_key, app_key) are missing.
     """
@@ -150,7 +153,6 @@ def _create_sig_plug(
         op_item_prefix=op_prefix,
         iv_index=iv_index,
         ble_device_callback=ble_device_callback,
-        ble_connect_callback=ble_connect_callback,
     )
 
 
