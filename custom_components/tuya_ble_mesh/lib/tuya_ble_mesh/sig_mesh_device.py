@@ -356,6 +356,12 @@ class SIGMeshDevice(SIGMeshDeviceCommandsMixin, SIGMeshDeviceSegmentsMixin):  # 
                             "Composition Data request failed (non-critical)",
                             exc_info=True,
                         )
+
+                    # Ask for the current on/off state so HA doesn't start out stale
+                    try:
+                        await self.request_onoff_state()
+                    except (SIGMeshError, BleakError):
+                        _LOGGER.debug("OnOff state request failed (non-critical)", exc_info=True)
                     return
 
                 except (BleakError, MeshConnectionError, OSError) as exc:
