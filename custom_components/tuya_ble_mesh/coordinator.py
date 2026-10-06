@@ -652,21 +652,9 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
 
     def _dispatch_update(self) -> None:
         if self._hass is not None:
-            # PLAT-747: Use entry.async_create_background_task for tracked task lifecycle
-            if self._entry is not None:
-                self._hass.loop.call_soon_threadsafe(
-                    lambda: self._entry.async_create_background_task(
-                        self._hass,
-                        self.async_set_updated_data(None),
-                        "dispatch_update",
-                        eager_start=True,
-                    )
-                )
-            else:
-                # Fallback for standalone mode (no entry)
-                self._hass.loop.call_soon_threadsafe(
-                    lambda: self._hass.async_create_task(self.async_set_updated_data(None))
-                )
+            # async_set_updated_data is a sync callback, so schedule the call itself
+            # rather than wrapping its None return value in a task.
+            self._hass.loop.call_soon_threadsafe(self.async_set_updated_data, None)
         else:
             self._notify_listeners()
 
@@ -904,6 +892,11 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             _LOGGER.info(
                 "Restored seq=%d (stored=%d + margin=%d)", restored, data["seq"], _SEQ_SAFETY_MARGIN
             )
+        elif self._device.get_seq() < _SEQ_SAFETY_MARGIN:
+            # Fresh entry: provisioning already used low sequence numbers on this
+            # node, so start above them or its replay protection drops our messages.
+            self._device.set_seq(_SEQ_SAFETY_MARGIN)
+            _LOGGER.info("No stored seq, starting at seq=%d", _SEQ_SAFETY_MARGIN)
 
     async def _save_seq(self) -> None:
         if self._seq_store is None or not self.capabilities.has_sig_sequence:
