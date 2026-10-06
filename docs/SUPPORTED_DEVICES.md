@@ -15,6 +15,8 @@ Both protocols are fully supported and can coexist on the same Home Assistant in
 | Malmbergs BT Smart | 9917072 | Smart Plug S17 | SIG Mesh | N/A | Power on/off | ✅ Working |
 | Malmbergs BT Smart | 9917071 | Smart Plug S17 | SIG Mesh | N/A | Power on/off | ✅ Expected Working |
 | Malmbergs BT Smart | 9917073 | Smart Plug S17 | SIG Mesh | N/A | Power on/off | ✅ Expected Working |
+| Classy Caps | Lumineer | Solar post cap | SIG Mesh (CID `07D0`, PID `0300`) | N/A | Power, brightness, white, colour | ✅ Working (this fork) |
+| Tuya white label | bXun1QKL | "WC Bulb" ceiling light (MAC `BC:23:4C`) | Telink Proprietary | `0x0102` (auto) | Power, brightness, color temp | 🧪 From a user's tested patch (v0.42.13) |
 
 ## Known Compatible Brands
 
@@ -26,6 +28,7 @@ setting the correct vendor ID during setup, but are not hardware-verified.
 | Malmbergs BT Smart | `0x1001` | LED drivers, bulbs | Tested in this project |
 | AwoX / Eglo | `0x0160` | Mesh lights | [python-awox-mesh-light](https://github.com/fsaris/python-awox-mesh-light) |
 | Dimond / retsimx | `0x0211` | Mesh lights | [tlsr8266_mesh](https://github.com/retsimx/tlsr8266_mesh) |
+| Tuya white label | `0x0102` | Smart Life ceiling lights | Detected from the light's status; see PROTOCOL.md section 8 |
 
 ## How to Find Your Vendor ID
 
