@@ -640,6 +640,8 @@ class TestVendorUpdate:
             lengths.append(device.send_vendor_command.await_args.args[0][4])
         assert len(set(lengths)) == TUYA_TIMESTAMP_VARIANTS
         assert lengths[-1] == lengths[0]
+        # The calendar layout (10 data bytes) is tried first
+        assert lengths[0] == 10
 
     def test_vendor_update_sets_energy(self) -> None:
         """Energy DP should set energy_kwh in state."""
