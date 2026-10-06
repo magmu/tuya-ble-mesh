@@ -7,6 +7,7 @@ Welcome to the Tuya BLE Mesh integration documentation.
 - **[Installation Guide](INSTALLATION.md)** — HACS and manual installation instructions
 - **[User Guide](USER_GUIDE.md)** — Configuration, setup, and daily usage
 - **[Supported Devices](SUPPORTED_DEVICES.md)** — Compatible hardware and device types
+- **[Fork Handoff](FORK_HANDOFF.md)** — State of this fork: releases, device findings, open items
 
 ## Integration Documentation
 

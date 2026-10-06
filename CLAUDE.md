@@ -95,6 +95,7 @@ HACS-compatible HA integration for Tuya BLE Mesh devices (including Malmbergs BT
 Fully local control via Tuya BLE Mesh. No cloud dependency.
 
 ### Key Documentation
+- `docs/FORK_HANDOFF.md` — State of this fork (magmu): release flow, device findings, open items. READ FIRST when working on the fork
 - `PROJECT_SPEC.md` — Goals, acceptance criteria, constraints
 - `docs/ARCHITECTURE.md` — Architecture + structural rules
 - `docs/SECURITY.md` — Security rules (READ SECTION 0 FIRST)
