@@ -1638,15 +1638,15 @@ class TestRSSILoopHABluetooth:
 
     @pytest.mark.asyncio
     async def test_rssi_loop_uses_ha_bluetooth_when_hass_set(self) -> None:
-        """RSSI loop with hass set should use async_ble_device_from_address."""
+        """RSSI loop with hass set reads RSSI from the last advertisement."""
         device = make_mock_device()
         mock_hass = MagicMock()
         coord = TuyaBLEMeshCoordinator(device, hass=mock_hass)
         coord._running = True
         coord._state = dc_replace(coord._state, available=True)
 
-        mock_ble_device = MagicMock()
-        mock_ble_device.rssi = -65
+        mock_service_info = MagicMock()
+        mock_service_info.rssi = -65
 
         call_count = 0
 
@@ -1660,8 +1660,8 @@ class TestRSSILoopHABluetooth:
             patch(_PATCH_SLEEP, side_effect=fake_sleep),
             patch(
                 # Deferred import inside function — patch at source module
-                "homeassistant.components.bluetooth.async_ble_device_from_address",
-                return_value=mock_ble_device,
+                "homeassistant.components.bluetooth.async_last_service_info",
+                return_value=mock_service_info,
             ) as mock_ble_fn,
         ):
             await coord._rssi_loop()

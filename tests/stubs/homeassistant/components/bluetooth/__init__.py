@@ -28,3 +28,7 @@ def async_ble_device_from_address(hass: Any, address: str, connectable: bool = T
 
 def async_address_present(hass: Any, address: str, connectable: bool = True) -> bool:
     return True
+
+
+def async_last_service_info(hass: Any, address: str, connectable: bool = True) -> Any:
+    return None

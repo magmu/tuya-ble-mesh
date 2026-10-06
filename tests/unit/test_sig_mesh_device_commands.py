@@ -507,7 +507,7 @@ class TestRequestTuyaDps:
     async def test_query_payload(self) -> None:
         from tuya_ble_mesh.sig_mesh_protocol import tuya_vendor_dp_query
 
-        assert tuya_vendor_dp_query() == b"\xcc\xd0\x07\x01\x00"
+        assert tuya_vendor_dp_query() == b"\xcc\xd0\x07\x01\x01\x00"
 
     @pytest.mark.asyncio
     async def test_sends_when_vendor_model_present(self) -> None:
