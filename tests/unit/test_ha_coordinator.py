@@ -547,7 +547,7 @@ class TestSeqPersistence:
     def test_seq_persistence_constants(self) -> None:
         """Verify seq persistence constants."""
         assert _SEQ_PERSIST_INTERVAL == 10
-        assert _SEQ_SAFETY_MARGIN == 100
+        assert _SEQ_SAFETY_MARGIN == 1000
 
 
 @pytest.mark.requires_ha
@@ -1257,6 +1257,37 @@ class TestSeqPersistenceExtended:
 
         hass.loop.call_soon_threadsafe.assert_called_once_with(coord.async_set_updated_data, None)
         coord._entry.async_create_background_task.assert_not_called()
+
+    def test_schedule_seq_save_uses_delayed_store_save(self) -> None:
+        """Seq saves are debounced through Store.async_delay_save with a live snapshot."""
+        device = _make_sig_mesh_device()
+        device.get_seq = MagicMock(return_value=1234)
+        coord = TuyaBLEMeshCoordinator(device, hass=MagicMock(), entry_id="test_entry")
+        coord._seq_store = MagicMock()
+
+        coord._schedule_seq_save()
+
+        coord._seq_store.async_delay_save.assert_called_once()
+        data_func = coord._seq_store.async_delay_save.call_args.args[0]
+        device.get_seq.return_value = 1300
+        assert data_func() == {"seq": 1300}
+
+    def test_schedule_seq_save_noop_without_store(self) -> None:
+        device = _make_sig_mesh_device()
+        coord = TuyaBLEMeshCoordinator(device, hass=MagicMock(), entry_id="test_entry")
+        coord._seq_store = None
+        coord._schedule_seq_save()  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_send_command_schedules_seq_save(self) -> None:
+        device = _make_sig_mesh_device()
+        coord = TuyaBLEMeshCoordinator(device, hass=MagicMock(), entry_id="test_entry")
+        coord._seq_store = MagicMock()
+        coord._conn_mgr.send_command_with_retry = AsyncMock()
+
+        await coord.send_command_with_retry(AsyncMock())
+
+        coord._seq_store.async_delay_save.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_load_seq_fresh_entry_starts_above_provisioning(self) -> None:
