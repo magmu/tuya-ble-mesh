@@ -6,85 +6,33 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # ─── Library tests (pure Python, no HA dependency) ───────────────────────────
-  test-lib:
-    name: Test lib (Python ${{ matrix.python-version }})
+  # Full suite: lib, HA layer, security and integration tests. HA is stubbed in
+  # tests/stubs, so this runs without a Home Assistant instance.
+  tests:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.11', '3.12']
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements_test.txt
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test]"
+        run: pip install -r requirements_test.txt
 
-      - name: Unit tests (lib only)
-        run: |
-          pytest tests/unit/ -v \
-            --ignore=tests/unit/test_ha_config_flow.py \
-            --ignore=tests/unit/test_ha_coordinator.py \
-            --ignore=tests/unit/test_ha_diagnostics.py \
-            --ignore=tests/unit/test_ha_init.py \
-            --ignore=tests/unit/test_ha_light.py \
-            --ignore=tests/unit/test_ha_repairs.py \
-            --ignore=tests/unit/test_ha_sensor.py \
-            --ignore=tests/unit/test_ha_switch.py \
-            --ignore=tests/unit/test_ha_const.py \
-            --cov=lib/tuya_ble_mesh --cov-report=xml --cov-report=term
+      - name: Unit, security and integration tests
+        run: pytest tests/unit tests/security tests/integration -q
 
-      - name: Security tests
-        run: pytest tests/security/ -v
-
-      - name: Upload coverage
-        if: matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.xml
-          fail_ci_if_error: false
-
-  # ─── HA integration tests (requires homeassistant package) ───────────────────
-  test-ha:
-    name: Test HA integration (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.12']
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test]"
-
-      - name: HA layer unit tests
-        run: |
-          pytest tests/unit/test_ha_config_flow.py \
-                 tests/unit/test_ha_coordinator.py \
-                 tests/unit/test_ha_diagnostics.py \
-                 tests/unit/test_ha_init.py \
-                 tests/unit/test_ha_light.py \
-                 tests/unit/test_ha_repairs.py \
-                 tests/unit/test_ha_sensor.py \
-                 tests/unit/test_ha_switch.py \
-                 tests/unit/test_ha_const.py \
-                 -v -m "requires_ha or not requires_ha"
-
-  # ─── Linting ─────────────────────────────────────────────────────────────────
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -92,10 +40,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: Install ruff
-        run: pip install ruff
+        run: pip install "$(grep '^ruff==' requirements_test.txt)"
 
       - name: Lint
         run: ruff check .
@@ -103,7 +51,6 @@ jobs:
       - name: Format check
         run: ruff format --check .
 
-  # ─── Type checking ────────────────────────────────────────────────────────────
   type-check:
     runs-on: ubuntu-latest
     steps:
@@ -111,22 +58,20 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements_test.txt
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test]"
-          pip install mypy
+        run: pip install -r requirements_test.txt
 
       - name: mypy (lib)
-        run: mypy lib/tuya_ble_mesh
+        run: mypy custom_components/tuya_ble_mesh/lib/tuya_ble_mesh
 
-      - name: mypy (custom_components)
-        run: mypy custom_components/tuya_ble_mesh --ignore-missing-imports
-        continue-on-error: true  # HA stubs not available in CI
+      - name: mypy (integration)
+        run: mypy custom_components/tuya_ble_mesh
 
-  # ─── Icon regression check (PLAT-692) ────────────────────────────────────────
+  # Icon regression check (PLAT-692)
   icon-check:
     runs-on: ubuntu-latest
     steps:
@@ -135,7 +80,16 @@ jobs:
       - name: Check for icon regression
         run: .github/scripts/check-icon-regression.sh
 
-  # ─── HACS validation ─────────────────────────────────────────────────────────
+  # Home Assistant's own manifest, translations and config-flow validator
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: home-assistant/actions/hassfest@master
+
+  # HACS packaging checks. brands: custom integrations aren't in the brands repo;
+  # topics: not used on this fork.
   hacs:
     runs-on: ubuntu-latest
     steps:
@@ -145,3 +99,4 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          ignore: brands topics
