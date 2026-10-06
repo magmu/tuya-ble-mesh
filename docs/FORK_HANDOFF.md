@@ -17,6 +17,14 @@ This fork of [11z4t/tuya-ble-mesh](https://github.com/11z4t/tuya-ble-mesh) adds 
   - PR bodies end with a plain "Generated with Claude Code" line.
   - Never log or print secrets (see `CLAUDE.md`).
 
+## Tests compared with the original repo
+
+At v0.42.13 the fork contains every commit of the original repo up to its v0.38.1 release, and none of its test files or test functions were removed. CI runs `tests/unit`, `tests/security` and `tests/integration`: 2322 tests, against 2196 on the original repo's `main`. The original CI ran a narrower set.
+
+Two suites exist but are not run in CI, here or in the original repo:
+- `tests/e2e`: Playwright tests that need a live Home Assistant instance (see `tests/e2e/SETUP-PRODUCTION-HA.md`).
+- `tests/hardware`: tests that need a real adapter and devices.
+
 ## Device findings
 
 ### Classy Caps Lumineer solar post cap (SIG Mesh, CID `07D0`, PID `0300`)
