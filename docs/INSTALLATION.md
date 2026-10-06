@@ -22,9 +22,13 @@ If you don't have HACS installed:
 
 ### Step 2: Add Custom Repository
 
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=magmu&repository=tuya-ble-mesh&category=integration)
+
+The button opens this repository in HACS directly (then skip to Step 3). Or add it by hand:
+
 1. Open **HACS** in Home Assistant
 2. Click the three-dot menu (top right) → **Custom repositories**
-3. Add repository URL: `https://github.com/11z4t/tuya-ble-mesh`
+3. Add repository URL: `https://github.com/magmu/tuya-ble-mesh`
 4. Category: **Integration**
 5. Click **Add**
 
@@ -42,14 +46,11 @@ For users who prefer manual control or don't use HACS.
 
 ### Step 1: Download
 
-Download the latest release from GitHub:
-```bash
-wget https://github.com/11z4t/tuya-ble-mesh/releases/latest/download/tuya-ble-mesh.zip
-```
+Download the source zip of the latest release from https://github.com/magmu/tuya-ble-mesh/releases/latest
 
 Or clone the repository:
 ```bash
-git clone https://github.com/11z4t/tuya-ble-mesh.git
+git clone https://github.com/magmu/tuya-ble-mesh.git
 ```
 
 ### Step 2: Copy Files
@@ -58,8 +59,8 @@ Copy the `custom_components/tuya_ble_mesh` directory to your Home Assistant conf
 
 ```bash
 # If downloaded as zip
-unzip tuya-ble-mesh.zip
-cp -r custom_components/tuya_ble_mesh /path/to/homeassistant/config/custom_components/
+unzip tuya-ble-mesh-*.zip
+cp -r tuya-ble-mesh-*/custom_components/tuya_ble_mesh /path/to/homeassistant/config/custom_components/
 
 # If cloned via git
 cp -r tuya-ble-mesh/custom_components/tuya_ble_mesh /path/to/homeassistant/config/custom_components/
@@ -264,6 +265,6 @@ If device is in unknown state:
 
 ## Support
 
-- [GitHub Issues](https://github.com/11z4t/tuya-ble-mesh/issues)
+- [GitHub Issues](https://github.com/magmu/tuya-ble-mesh/issues)
 - [Home Assistant Community](https://community.home-assistant.io)
-- [Documentation](https://github.com/11z4t/tuya-ble-mesh/tree/main/docs)
+- [Documentation](https://github.com/magmu/tuya-ble-mesh/tree/main/docs)

@@ -45,4 +45,4 @@ Welcome to the Tuya BLE Mesh integration documentation.
 
 - [Home Assistant Documentation](https://www.home-assistant.io/docs/)
 - [HACS Documentation](https://hacs.xyz/)
-- [GitHub Repository](https://github.com/11z4t/tuya-ble-mesh)
+- [GitHub Repository](https://github.com/magmu/tuya-ble-mesh)
