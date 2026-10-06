@@ -364,6 +364,16 @@ class TestLightActions:
         coord.assume_state.assert_called_once_with({"is_on": False}, {"is_on": False})
 
     @pytest.mark.asyncio
+    async def test_sent_brightness_assumed_for_lamp_without_power_status(self) -> None:
+        coord = make_mock_coordinator()
+        coord.device.is_tuya_light = True
+        light = TuyaBLEMeshLight(coord, "test_entry")
+
+        await _turn_on(light, brightness=255)
+
+        coord.assume_state.assert_called_with({"brightness": 100}, {"brightness": 100})
+
+    @pytest.mark.asyncio
     async def test_power_not_assumed_for_default_lamp(self) -> None:
         coord = make_mock_coordinator()
         light = TuyaBLEMeshLight(coord, "test_entry")

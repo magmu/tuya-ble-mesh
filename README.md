@@ -43,7 +43,7 @@ In both modes, Home Assistant itself doesn't need Bluetooth hardware.
 |--------|-------|------|--------|
 | LED Driver 9952126 | Malmbergs | Dimmable LED driver | ✅ Tested — on/off, brightness |
 | Smart Plug S17 | Malmbergs | BLE Mesh relay plug | ✅ Tested — on/off, SIG Mesh provisioned |
-| WC Bulb ceiling light | Tuya white label (product `bXun1QKL`, MAC `BC:23:4C`) | Telink mesh light, vendor `0x0102` | 🧪 Fixed in this fork from a user's capture — on/off, brightness, white temperature; please report results |
+| WC Bulb ceiling light | Tuya white label (product `bXun1QKL`, MAC `BC:23:4C`) | Telink mesh light, vendor `0x0102` | 🧪 Fixed in this fork from a user's tested patch — on/off, brightness, white temperature; please report results |
 | Lumineer solar post cap | Classy Caps | SIG Mesh light (Telink, CID `07D0`, PID `0300`) | ✅ Tested (this fork) — on/off, brightness, white temperature, colour, firmware, signal strength, solar sleep handling |
 
 ### Potentially Compatible
@@ -81,9 +81,9 @@ Everything below was added for SIG Mesh lights reached through an ESPHome Blueto
 **Telink lights (Tuya white label, vendor 0x0102)**
 - Pairing finishes on lights that ask for the long-term key (pair reply `0x06`) by sending it, as the Smart Life app does.
 - The Telink setup step no longer hangs after a successful pair (it no longer subscribes to notifications to verify).
-- Lights whose status reports vendor `0x0102` switch with `0xD0`, set brightness and white balance with `0xE2`, and read status from `0xDB` packets. The vendor is picked up from the light's own status, or can be set to `0x0102` during setup. These lights report no on/off state, so HA keeps the last state it sent.
+- Lights whose status reports vendor `0x0102` switch with `0xD0` (sent with vendor `0x0102`), set white balance with compact DP 123, and read status from `0xDB` packets; brightness stays DP 122. This is the command set the reporter tested from HA. The light is recognised from its own status, so setup can keep the default vendor. These lights report no on/off state and only report every 30 s, so HA shows the last values it sent until the next report.
 - Commands are spaced at least 0.4 s apart, so a brightness and a white change from one action both apply.
-- A dropped BLE link is detected (disconnect callback and write errors), and `start_notify` is not retried after it has failed once.
+- A dropped BLE link is detected (disconnect callback and write errors). `start_notify` is not retried for a device after it has failed once (also across reloads), and a link that dies during notification setup is reported as a failed connect instead of "ready".
 - Fixed a crash in the light's extra state attributes.
 
 **Project**

@@ -35,9 +35,6 @@ from tuya_ble_mesh.const import (
     TELINK_STATUS_RESPONSE,
     TELINK_STATUS_VENDOR_OFFSET,
     TELINK_VENDOR_ID,
-    TUYA_LIGHT_E2_MASK_BRIGHTNESS,
-    TUYA_LIGHT_E2_MASK_WHITE,
-    TUYA_LIGHT_E2_PREFIX,
     TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS,
     TUYA_LIGHT_STATUS_OFFSET_COLD,
     TUYA_LIGHT_VENDOR_ID,
@@ -437,47 +434,6 @@ def decode_status(data: bytes) -> StatusResponse | None:
         blue=data[STATUS_OFFSET_BLUE],
         vendor_id=vendor,
     )
-
-
-def encode_tuya_light_brightness(level: int) -> bytes:
-    """Build 0xE2 params that set a Tuya 0x0102 light's brightness.
-
-    Args:
-        level: Brightness percent (1-100).
-
-    Returns:
-        9-byte parameter block.
-
-    Raises:
-        ProtocolError: If level is out of range.
-    """
-    if not 1 <= level <= 100:
-        msg = f"Brightness must be 1..100, got {level}"
-        raise ProtocolError(msg)
-    return bytes(TUYA_LIGHT_E2_PREFIX) + bytes([0, 0, level, 0, TUYA_LIGHT_E2_MASK_BRIGHTNESS])
-
-
-def encode_tuya_light_white(temp: int) -> bytes:
-    """Build 0xE2 params that set a Tuya 0x0102 light's white balance.
-
-    The lamp mixes a warm and a cold channel that add up to 255.
-
-    Args:
-        temp: Color temperature on the integration's scale
-            (0 = warmest, TUYA_LIGHT_TEMP_MAX = coolest).
-
-    Returns:
-        9-byte parameter block.
-
-    Raises:
-        ProtocolError: If temp is out of range.
-    """
-    if not 0 <= temp <= TUYA_LIGHT_TEMP_MAX:
-        msg = f"Color temp must be 0..{TUYA_LIGHT_TEMP_MAX}, got {temp}"
-        raise ProtocolError(msg)
-    cold = round(temp * 0xFF / TUYA_LIGHT_TEMP_MAX)
-    warm = 0xFF - cold
-    return bytes(TUYA_LIGHT_E2_PREFIX) + bytes([warm, cold, 0, 0, TUYA_LIGHT_E2_MASK_WHITE])
 
 
 # --- Pair response parsing ---

@@ -1,6 +1,7 @@
 """Tests for Tuya white-label Telink lights (vendor 0x0102, e.g. Smart Life "WC Bulb").
 
-Byte layouts come from a Smart Life HCI capture of the lamp (product bXun1QKL).
+Byte layouts and the working command set come from a user's report and local
+patch for the lamp (product bXun1QKL), tested from Home Assistant.
 """
 
 from __future__ import annotations
@@ -17,12 +18,12 @@ from bleak import BleakError
 _ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT / "custom_components" / "tuya_ble_mesh" / "lib"))
 
+from tuya_ble_mesh import connection as connection_mod  # noqa: E402
 from tuya_ble_mesh.connection import BLEConnection, ConnectionState  # noqa: E402
 from tuya_ble_mesh.const import (  # noqa: E402
     PAIR_OPCODE_SET_LTK,
     PAIR_OPCODE_SET_OK,
     TELINK_CHAR_PAIRING,
-    TELINK_CMD_COLOR,
     TELINK_CMD_DP_WRITE,
     TELINK_CMD_POWER,
     TELINK_VENDOR_ID,
@@ -33,8 +34,7 @@ from tuya_ble_mesh.device_dispatcher import _CommandDispatcher  # noqa: E402
 from tuya_ble_mesh.exceptions import MeshConnectionError  # noqa: E402
 from tuya_ble_mesh.protocol import (  # noqa: E402
     decode_status,
-    encode_tuya_light_brightness,
-    encode_tuya_light_white,
+    encode_compact_dp,
     parse_pair_response,
 )
 from tuya_ble_mesh.provisioner import set_mesh_credentials  # noqa: E402
@@ -77,27 +77,6 @@ class TestStatusDecode:
         assert status.white_brightness == 80
         assert status.white_temp == 40
         assert status.power_known is True
-
-
-class TestParamEncoders:
-    def test_brightness_matches_capture(self) -> None:
-        assert encode_tuya_light_brightness(1) == bytes.fromhex("090000000000010004")
-        assert encode_tuya_light_brightness(100) == bytes.fromhex("090000000000640004")
-
-    def test_white_matches_capture(self) -> None:
-        assert encode_tuya_light_white(0) == bytes.fromhex("09000000ff00000018")
-        assert encode_tuya_light_white(127) == bytes.fromhex("0900000000ff000018")
-
-    def test_white_channels_add_up(self) -> None:
-        params = encode_tuya_light_white(64)
-        assert params[4] + params[5] == 0xFF
-
-    @pytest.mark.parametrize("level", [0, 101])
-    def test_brightness_range(self, level: int) -> None:
-        from tuya_ble_mesh.exceptions import ProtocolError
-
-        with pytest.raises(ProtocolError):
-            encode_tuya_light_brightness(level)
 
 
 class TestLongTermKey:
@@ -144,12 +123,28 @@ class TestCommands:
         ]
 
     @pytest.mark.asyncio
-    async def test_brightness_and_temp_use_e2(self) -> None:
+    async def test_brightness_and_temp_use_compact_dps(self) -> None:
         device, send = self._device(TUYA_LIGHT_VENDOR_ID)
         await device.send_brightness(50)
         await device.send_color_temp(127)
-        assert send.call_args_list[0].args == (TELINK_CMD_COLOR, encode_tuya_light_brightness(50))
-        assert send.call_args_list[1].args == (TELINK_CMD_COLOR, encode_tuya_light_white(127))
+        await device.send_color_temp(0)
+        assert send.call_args_list[0].args == (TELINK_CMD_DP_WRITE, encode_compact_dp(122, 2, 50))
+        # DP 123 reads only the second-lowest byte; 0 is ignored, so full warm is 0x0100
+        assert send.call_args_list[1].args == (
+            TELINK_CMD_DP_WRITE,
+            encode_compact_dp(123, 2, 0xFF00),
+        )
+        assert send.call_args_list[2].args == (
+            TELINK_CMD_DP_WRITE,
+            encode_compact_dp(123, 2, 0x0100),
+        )
+
+    def test_command_vendor_per_opcode(self) -> None:
+        device = MeshDevice(MAC, b"out_of_mesh", b"123456")
+        assert device._command_vendor(TELINK_CMD_POWER) == TELINK_VENDOR_ID
+        device._tuya_light = True
+        assert device._command_vendor(TELINK_CMD_POWER) == TUYA_LIGHT_VENDOR_ID
+        assert device._command_vendor(TELINK_CMD_DP_WRITE) == TELINK_VENDOR_ID
 
     @pytest.mark.asyncio
     async def test_default_vendor_keeps_compact_dp(self) -> None:
@@ -166,7 +161,6 @@ class TestCommands:
         with patch("tuya_ble_mesh.device.decrypt_notification", return_value=_STATUS_COLD_100):
             device._handle_notification(MagicMock(), bytearray(20))
         assert device.is_tuya_light is True
-        assert device.connection.vendor_id == TUYA_LIGHT_VENDOR_ID
         assert len(received) == 1
 
     def test_non_status_packet_not_dispatched(self) -> None:
@@ -238,9 +232,37 @@ class TestConnectionRecovery:
 
     @pytest.mark.asyncio
     async def test_start_notify_skipped_after_failure(self) -> None:
+        connection_mod._SKIP_START_NOTIFY.discard(MAC)
         conn, client = self._ready()
         conn.set_notification_handler(MagicMock())
         client.start_notify = AsyncMock(side_effect=BleakError("not supported"))
         assert await conn._start_notify_safe() is False
-        assert await conn._start_notify_safe() is False
+        # A new connection for the same address (entry reload) skips it too
+        conn2, client2 = self._ready()
+        conn2.set_notification_handler(MagicMock())
+        assert await conn2._start_notify_safe() is False
         assert client.start_notify.call_count == 1
+        client2.start_notify.assert_not_called()
+        connection_mod._SKIP_START_NOTIFY.discard(MAC)
+
+
+class TestDeadLinkAfterNotify:
+    @pytest.mark.asyncio
+    async def test_connect_fails_when_notify_setup_kills_link(self) -> None:
+        conn = BLEConnection(MAC, b"out_of_mesh", b"123456")
+        client = AsyncMock()
+        client.is_connected = False
+        client.read_gatt_char = AsyncMock(return_value=b"1.0")
+
+        async def _connect(*_args: object) -> None:
+            conn._client = client
+
+        conn.set_notification_handler(MagicMock())
+        with (
+            patch.object(conn, "_connect_with_retry", side_effect=_connect),
+            patch("tuya_ble_mesh.connection.provision", new=AsyncMock(return_value=SESSION_KEY)),
+            pytest.raises(MeshConnectionError),
+        ):
+            await conn.connect()
+        assert conn.state == ConnectionState.DISCONNECTED
+        connection_mod._SKIP_START_NOTIFY.discard(MAC)

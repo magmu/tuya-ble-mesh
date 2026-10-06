@@ -462,11 +462,13 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
                     _LOGGER.debug("Set color brightness: %d", brightness)
                 return
 
+            sent: dict[str, int] = {}
             if color_temp is not None:
                 if self.coordinator.state.mode == 1:
                     await device.send_light_mode(0)
                 device_temp = color_temp_to_device(color_temp)
                 await device.send_color_temp(device_temp)
+                sent["color_temp"] = device_temp
                 _LOGGER.debug("Set color temp: HA %d mireds -> device %d", color_temp, device_temp)
 
             if brightness is not None:
@@ -476,12 +478,17 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
                 else:
                     device_brightness = brightness_to_device(brightness)
                     await device.send_brightness(device_brightness)
+                    sent["brightness"] = device_brightness
                     _LOGGER.debug(
                         "Set brightness: HA %d -> device %d", brightness, device_brightness
                     )
 
             if not has_target or (self._no_power_status and not self.coordinator.state.is_on):
                 await self._send_power(True)
+
+            if sent and self._no_power_status:
+                # These lamps only report every 30 s; show what was sent until then.
+                self.coordinator.assume_state(sent, sent)
 
     def _cancel_pending_command(self) -> None:
         """Cancel any pending debounced command task."""

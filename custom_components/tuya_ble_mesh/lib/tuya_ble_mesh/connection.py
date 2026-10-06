@@ -53,6 +53,12 @@ _JITTER_FACTOR = 0.2  # 0-20% random jitter
 _CONNECT_RETRY_BACKOFF_MULTIPLIER = 2.0
 _CONNECT_RETRY_MAX_BACKOFF = 8.0
 
+# Addresses where start_notify has failed. BlueZ often drops the link after a
+# failed start_notify, so later connects (also after an entry reload) skip it.
+# Pairing already enables status notifications by writing 0x01 to char 1911,
+# which is all the Smart Life app does.
+_SKIP_START_NOTIFY: set[str] = set()
+
 # start_notify can block until the BlueZ timeout on Telink devices
 _START_NOTIFY_TIMEOUT = 10.0
 
@@ -132,10 +138,6 @@ class BLEConnection:
         self._notification_handler: Callable[..., Any] | None = None
         # True if start_notify succeeded; False = poll-only mode
         self._notify_active: bool = False
-        # Set once start_notify has failed: BlueZ often drops the link after a
-        # failed start_notify, so later connects skip it. Pairing already
-        # enables status notifications by writing 0x01 to char 1911.
-        self._notify_unsupported: bool = False
         self._disconnect_task: asyncio.Task[None] | None = None
 
     @property
@@ -166,20 +168,6 @@ class BLEConnection:
         if self._session_key is None:
             return None
         return bytes(self._session_key)
-
-    @property
-    def vendor_id(self) -> bytes:
-        """Return the vendor bytes used in keep-alive packets.
-
-        Returns:
-            bytes: 2-byte vendor identifier.
-        """
-        return self._vendor_id
-
-    @vendor_id.setter
-    def vendor_id(self, value: bytes) -> None:
-        """Set the vendor bytes used in keep-alive packets."""
-        self._vendor_id = value
 
     @property
     def is_ready(self) -> bool:
@@ -265,7 +253,7 @@ class BLEConnection:
         """
         if self._client is None or self._notification_handler is None:
             return False
-        if self._notify_unsupported:
+        if self._address in _SKIP_START_NOTIFY:
             _LOGGER.debug("Skipping start_notify for %s (failed before)", self._address)
             return False
 
@@ -281,7 +269,7 @@ class BLEConnection:
             )
         except (BleakError, OSError, EOFError, TimeoutError) as exc:
             self._notify_active = False
-            self._notify_unsupported = True
+            _SKIP_START_NOTIFY.add(self._address)
             _LOGGER.warning(
                 "start_notify failed for %s (%s) — running in poll-only mode. "
                 "Status updates arrive via keep-alive queries only.",
@@ -346,9 +334,16 @@ class BLEConnection:
 
         await self._read_firmware_version()
 
+        await self._start_notify_safe()
+        if self._client is None or not self._client.is_connected:
+            # A failed start_notify can kill the BlueZ link; don't report READY
+            # and write into nothing.
+            await self._cleanup()
+            msg = f"BLE link lost during notification setup for {self._address}"
+            raise MeshConnectionError(msg)
+
         self._state = ConnectionState.READY
         await self._start_keep_alive()  # CF-3: Now awaited
-        await self._start_notify_safe()
         _LOGGER.info("Connected and provisioned: %s", self._address)
 
     async def _connect_with_retry(
