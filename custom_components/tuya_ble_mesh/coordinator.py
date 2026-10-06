@@ -23,6 +23,7 @@ from custom_components.tuya_ble_mesh.connection_manager import (
     ConnectionManager,
     ConnectionStatistics,
 )
+from custom_components.tuya_ble_mesh.const import CONF_SOLAR_POWERED
 from custom_components.tuya_ble_mesh.device_capabilities import DeviceCapabilities
 from custom_components.tuya_ble_mesh.error_classifier import ErrorClass
 
@@ -115,6 +116,21 @@ class TuyaBLEMeshDeviceState:
     degraded_reason: str | None = None
 
 
+# Civil twilight: solar lights may still be dark-sensing until the sun is this low
+_SOLAR_DARK_ELEVATION = -6.0
+
+
+def _is_daylight(hass: HomeAssistant) -> bool:
+    """Return True from civil dawn to civil dusk, using HA's sun integration."""
+    sun = hass.states.get("sun.sun")
+    elevation = sun.attributes.get("elevation") if sun is not None else None
+    if isinstance(elevation, (int, float)):
+        return float(elevation) > _SOLAR_DARK_ELEVATION
+    from homeassistant.helpers.sun import is_up
+
+    return bool(is_up(hass))
+
+
 class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
     """Push-based coordinator for a single BLE mesh device."""
 
@@ -149,6 +165,16 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             on_state_update=self._handle_conn_state_update,
         )
         self._staleness_task: asyncio.Task[None] | None = None
+        self.solar_powered: bool = bool(
+            entry is not None and entry.options.get(CONF_SOLAR_POWERED, False)
+        )
+        self._conn_mgr.expected_offline = self._expected_offline
+
+    def _expected_offline(self) -> bool:
+        """Solar devices sleep while it's light out, so being offline then is normal."""
+        if not self.solar_powered or self._hass is None:
+            return False
+        return _is_daylight(self._hass)
 
     # --- Explicit delegation to ConnectionManager (no magic methods) ---
 
@@ -613,6 +639,10 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
     def schedule_reconnect(self) -> None:
         self._conn_mgr.schedule_reconnect()
 
+    def notify_advertisement(self) -> None:
+        """Tell the connection manager the device was just seen advertising."""
+        self._conn_mgr.notify_advertisement()
+
     async def send_command_with_retry(
         self,
         coro_func: Callable[[], Any],
@@ -672,6 +702,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         )
         self.start_rssi_polling()
         self._schedule_seq_save()
+        self._ensure_staleness_watchdog()
         self._dispatch_update()
 
     def _handle_conn_state_update(self) -> None:
@@ -948,17 +979,7 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         Raises:
             Exception: Any connection or authentication error from device.connect().
         """
-        self._conn_mgr.running = True
-        await self._load_seq()
-        if self.capabilities.has_onoff_callback:
-            self._device.register_onoff_callback(self._on_onoff_update)
-        if self.capabilities.has_vendor_callback:
-            self._device.register_vendor_callback(self._on_vendor_update)
-        if self.capabilities.has_composition_callback:
-            self._device.register_composition_callback(self._on_composition_update)
-        if self.capabilities.has_status_callback:
-            self._device.register_status_callback(self._on_status_update)
-        self._device.register_disconnect_callback(self._on_disconnect)
+        await self._async_prepare()
 
         # Connect and let exceptions propagate to async_setup_entry
         response_time = await self._conn_mgr.async_connect()
@@ -975,14 +996,42 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         )
 
         self._schedule_seq_save()
+        self._ensure_staleness_watchdog()
+        self._dispatch_update()
 
+    async def async_start_waiting(self) -> None:
+        """Set up without connecting, for a device that isn't advertising yet.
+
+        Entities start unavailable; the reconnect loop waits for the device's
+        next advertisement and connects then.
+        """
+        await self._async_prepare()
+        _LOGGER.info(
+            "%s is not advertising yet; will connect when it is seen",
+            self._device.address,
+        )
+        self._conn_mgr.schedule_reconnect()
+
+    def _ensure_staleness_watchdog(self) -> None:
         # Start staleness watchdog (PLAT-746, PLAT-747)
         if self._staleness_task is None or self._staleness_task.done():
             self._staleness_task = self._create_background_task(
                 self._staleness_watchdog_loop(), "staleness_watchdog"
             )
 
-        self._dispatch_update()
+    async def _async_prepare(self) -> None:
+        """Load state and register device callbacks before the first connect."""
+        self._conn_mgr.running = True
+        await self._load_seq()
+        if self.capabilities.has_onoff_callback:
+            self._device.register_onoff_callback(self._on_onoff_update)
+        if self.capabilities.has_vendor_callback:
+            self._device.register_vendor_callback(self._on_vendor_update)
+        if self.capabilities.has_composition_callback:
+            self._device.register_composition_callback(self._on_composition_update)
+        if self.capabilities.has_status_callback:
+            self._device.register_status_callback(self._on_status_update)
+        self._device.register_disconnect_callback(self._on_disconnect)
 
     async def async_stop(self) -> None:
         self._conn_mgr.running = False

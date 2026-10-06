@@ -24,3 +24,7 @@ class BluetoothServiceInfoBleak:
 
 def async_ble_device_from_address(hass: Any, address: str, connectable: bool = True) -> Any:
     return MagicMock()
+
+
+def async_address_present(hass: Any, address: str, connectable: bool = True) -> bool:
+    return True

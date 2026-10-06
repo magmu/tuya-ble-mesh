@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -192,7 +193,7 @@ class TestSwitchPlatformSetup:
         assert isinstance(entities[0], TuyaBLEMeshSwitch)
 
     @pytest.mark.asyncio
-    async def test_setup_skips_light_device_type(self) -> None:
+    async def test_setup_light_gets_only_solar_setting(self) -> None:
         coord = make_mock_coordinator()
         hass = MagicMock()
         entry = MagicMock()
@@ -200,11 +201,14 @@ class TestSwitchPlatformSetup:
         entry.runtime_data.coordinator = coord
         entry.runtime_data.device_info = MagicMock()
         entry.data = {"device_type": "light"}
+        entry.options = {}
         add_entities = MagicMock()
 
         await async_setup_entry(hass, entry, add_entities)
 
-        add_entities.assert_not_called()
+        # Lights get only the solar-powered setting, no outlet switch
+        (entities,) = add_entities.call_args.args
+        assert [type(e).__name__ for e in entities] == ["TuyaBLEMeshSolarSwitch"]
 
     @pytest.mark.asyncio
     async def test_setup_creates_switch_for_sig_plug(self) -> None:
@@ -240,3 +244,42 @@ class TestSwitchPlatformSetup:
         await async_setup_entry(hass, entry, add_entities)
 
         add_entities.assert_not_called()
+
+
+class TestSolarSwitch:
+    """Solar-powered setting switch."""
+
+    def _make(self, solar: bool = False) -> tuple[Any, MagicMock, MagicMock]:
+        from custom_components.tuya_ble_mesh.switch import TuyaBLEMeshSolarSwitch
+
+        coord = make_mock_coordinator()
+        coord.solar_powered = solar
+        hass = MagicMock()
+        entry = MagicMock()
+        entry.options = {"other": 1}
+        switch = TuyaBLEMeshSolarSwitch(hass, entry, coord)
+        switch.async_write_ha_state = MagicMock()  # type: ignore[method-assign]
+        return switch, hass, entry
+
+    def test_reflects_coordinator(self) -> None:
+        switch, _hass, _entry = self._make(solar=True)
+        assert switch.is_on is True
+        assert switch.available is True
+
+    @pytest.mark.asyncio
+    async def test_turn_on_saves_option(self) -> None:
+        switch, hass, entry = self._make()
+        await switch.async_turn_on()
+        assert switch.is_on is True
+        hass.config_entries.async_update_entry.assert_called_once_with(
+            entry, options={"other": 1, "solar_powered": True}
+        )
+
+    @pytest.mark.asyncio
+    async def test_turn_off_saves_option(self) -> None:
+        switch, hass, entry = self._make(solar=True)
+        await switch.async_turn_off()
+        assert switch.is_on is False
+        hass.config_entries.async_update_entry.assert_called_once_with(
+            entry, options={"other": 1, "solar_powered": False}
+        )
