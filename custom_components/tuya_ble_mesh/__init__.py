@@ -140,12 +140,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
         _vid_normalized = vendor_id_hex.lower()
     vendor_name = KNOWN_VENDOR_IDS.get(_vid_normalized, "Tuya / Telink")
 
+    # Firmware doesn't change while offline, so start from the version HA last stored
+    from homeassistant.helpers import device_registry as dr
+
+    dev_reg = dr.async_get(hass)
+    known_device = dev_reg.async_get_device(identifiers={(DOMAIN, mac_address)})
+    stored_firmware = getattr(known_device, "sw_version", None)
+    if not isinstance(stored_firmware, str):
+        stored_firmware = None
+    coordinator.seed_firmware_version(stored_firmware)
+
     device_info = DeviceInfo(
         identifiers={(DOMAIN, mac_address)},
         name=entry.title,
         manufacturer=vendor_name,
         model=DEVICE_MODEL_NAMES.get(device_type, "BLE Mesh Device"),
-        sw_version=None,  # Will be populated by coordinator after connection
+        sw_version=stored_firmware,
         connections={("mac", mac_address)},
     )
 
@@ -209,6 +219,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: TuyaBLEMeshConfigEntry) 
 
     # Register services
     await _async_register_services(hass)
+
+    # Store the firmware version on the HA device once the device reports it
+    def _sync_firmware_version() -> None:
+        version = coordinator.state.firmware_version
+        if version is None:
+            return
+        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, mac_address)})
+        if device_entry is not None and device_entry.sw_version != version:
+            dev_reg.async_update_device(device_entry.id, sw_version=version)
+
+    entry.async_on_unload(coordinator.async_add_listener(_sync_firmware_version))
 
     # Reload entry when options are changed
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))

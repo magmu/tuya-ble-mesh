@@ -84,6 +84,7 @@ class TuyaBLEMeshSensorEntityDescription(SensorEntityDescription):
 
     value_fn: Callable[[TuyaBLEMeshDeviceState], StateType]
     available_fn: Callable[[TuyaBLEMeshDeviceState], bool] | None = None
+    requires_connection: bool = True
 
 
 SENSOR_DESCRIPTIONS: tuple[TuyaBLEMeshSensorEntityDescription, ...] = (
@@ -105,6 +106,8 @@ SENSOR_DESCRIPTIONS: tuple[TuyaBLEMeshSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,  # G3: disabled by default
         value_fn=lambda state: state.firmware_version,
+        available_fn=lambda state: state.firmware_version is not None,
+        requires_connection=False,
     ),
     TuyaBLEMeshSensorEntityDescription(
         key="power",
@@ -244,6 +247,8 @@ class TuyaBLEMeshSensor(SensorEntity):
             and not self.entity_description.available_fn(self._coordinator.state)
         ):
             return False
+        if not self.entity_description.requires_connection:
+            return True
         # Base availability from coordinator
         return self._coordinator.state.available
 

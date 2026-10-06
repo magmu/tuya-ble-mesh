@@ -57,7 +57,8 @@ class TestSensorDescriptions:
         assert desc.entity_category == EntityCategory.DIAGNOSTIC
         assert desc.entity_registry_enabled_default is False
         assert desc.value_fn is not None
-        assert desc.available_fn is None
+        assert desc.available_fn is not None
+        assert desc.requires_connection is False
 
     def test_power_description(self) -> None:
         """Test power sensor description."""

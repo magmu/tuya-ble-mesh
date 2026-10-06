@@ -102,6 +102,18 @@ class TestCoordinatorInit:
         coord = TuyaBLEMeshCoordinator(device)
         assert coord.device is device
 
+    def test_seed_firmware_version_fills_unknown(self) -> None:
+        coord = TuyaBLEMeshCoordinator(make_mock_device())
+        coord.seed_firmware_version("CID:07D0 PID:0300 VID:3235")
+        assert coord.state.firmware_version == "CID:07D0 PID:0300 VID:3235"
+
+    def test_seed_firmware_version_keeps_reported(self) -> None:
+        coord = TuyaBLEMeshCoordinator(make_mock_device())
+        coord.seed_firmware_version("new")
+        coord.seed_firmware_version("old")
+        coord.seed_firmware_version(None)
+        assert coord.state.firmware_version == "new"
+
 
 @pytest.mark.requires_ha
 class TestStatusUpdate:

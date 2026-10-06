@@ -74,6 +74,13 @@ class TestFirmwareUpdateEntity:
 
         assert entity.available is False
 
+    def test_available_offline_when_version_known(self) -> None:
+        """Firmware stays visible while the device is offline."""
+        coord = _make_mock_coordinator(firmware_version="1.6.0", available=False)
+        entity = TuyaBLEMeshFirmwareUpdateEntity(coord, "entry_abc", MagicMock())
+
+        assert entity.available is True
+
     def test_unique_id_uses_entry_id(self) -> None:
         """Unique ID must be scoped to entry_id to avoid collisions."""
         coord = _make_mock_coordinator()
