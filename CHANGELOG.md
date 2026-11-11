@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Tuya `0x0102` lights: brightness, white and RGB use `0xE2` with vendor `0x0102` (`09 | R G B | warm cold | brightness % | 00 | mask`), as the Smart Life app sends them. Verified on GE imagine Paragon RGB+CCT downlights (Tuya `9lcrglpq`), which ignore the compact DPs
+- A light on its own mesh credentials is logged in to without rewriting them, so it no longer flashes on every connect; lights on `out_of_mesh` are still provisioned as before
+- The packet sequence starts from the clock, so a restarted HA is not ignored by a light that remembers the last sequence it saw
+
 ### Added
 - CI security job: bandit, pip-audit (manifest requirements) and detect-secrets on every PR, push to main and weekly
 - Dependabot: weekly update PRs for pip test dependencies and GitHub Actions

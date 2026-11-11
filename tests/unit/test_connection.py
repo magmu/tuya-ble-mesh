@@ -165,6 +165,35 @@ class TestConnect:
         await conn._stop_keep_alive()
 
     @pytest.mark.asyncio
+    async def test_connect_with_own_credentials_logs_in_only(self) -> None:
+        """A device on its own credentials is not re-provisioned (Tuya lights flash on it)."""
+        conn = BLEConnection(MAC, b"my_mesh", b"secret")
+        mock_client = AsyncMock()
+        mock_client.connect = AsyncMock()
+        mock_client.read_gatt_char = AsyncMock(return_value=b"1.0.0")
+        mock_ble_device = MagicMock()
+
+        with (
+            patch(
+                "tuya_ble_mesh.connection.BleakScanner.find_device_by_address",
+                return_value=mock_ble_device,
+            ),
+            patch("tuya_ble_mesh.connection.BleakClient", return_value=mock_client),
+            patch("tuya_ble_mesh.connection.provision", return_value=SESSION_KEY) as mock_prov,
+        ):
+            await conn.connect()
+
+        mock_prov.assert_called_once_with(
+            mock_client,
+            current_name=b"my_mesh",
+            current_password=b"secret",
+            new_name=None,
+            new_password=None,
+        )
+
+        await conn._stop_keep_alive()
+
+    @pytest.mark.asyncio
     async def test_connect_already_ready(self) -> None:
         conn, _ = _make_ready_conn()
         await conn.connect()  # Should be a no-op

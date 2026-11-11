@@ -30,6 +30,7 @@ from tuya_ble_mesh.const import (
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_MAX_RETRIES,
     DEFAULT_STATUS_WAIT_TIMEOUT,
+    TELINK_CMD_COLOR,
     TELINK_CMD_POWER,
     TELINK_VENDOR_ID,
     TUYA_LIGHT_VENDOR_ID,
@@ -404,12 +405,13 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
     def _command_vendor(self, opcode: int) -> bytes:
         """Return the vendor bytes to send an opcode with.
 
-        Tuya 0x0102 lights switch only with 0xD0 sent with vendor 0x0102, and
-        take their compact DPs with vendor 0x1001 (as tested from HA).
+        Tuya 0x0102 lights take 0xD0 (power) and 0xE2 (brightness, white, RGB)
+        with vendor 0x0102, and their compact DPs with vendor 0x1001.
         """
         if not self._tuya_light:
             return bytes(self._vendor_id)
-        return bytes(TUYA_LIGHT_VENDOR_ID if opcode == TELINK_CMD_POWER else TELINK_VENDOR_ID)
+        tuya_opcodes = (TELINK_CMD_POWER, TELINK_CMD_COLOR)
+        return bytes(TUYA_LIGHT_VENDOR_ID if opcode in tuya_opcodes else TELINK_VENDOR_ID)
 
     # --- High-level commands (0xD2 compact DP format) ---
 

@@ -284,9 +284,9 @@ async def provision(
         password = new_password if new_password is not None else current_password
         await set_mesh_credentials(client, session_key, name, password)
     else:
-        _LOGGER.warning(
-            "Skipping set_mesh_credentials — device will stay in "
-            "pairing mode! Pass new_name/new_password to provision.",
+        _LOGGER.info(
+            "Login only: keeping the mesh credentials already on the device "
+            "(a device still on the defaults needs new_name/new_password)",
         )
 
     # Notifications are already enabled in pair() — do NOT call enable_notifications() again

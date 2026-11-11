@@ -24,6 +24,7 @@ from tuya_ble_mesh.const import (  # noqa: E402
     PAIR_OPCODE_SET_LTK,
     PAIR_OPCODE_SET_OK,
     TELINK_CHAR_PAIRING,
+    TELINK_CMD_COLOR,
     TELINK_CMD_DP_WRITE,
     TELINK_CMD_POWER,
     TELINK_VENDOR_ID,
@@ -34,7 +35,6 @@ from tuya_ble_mesh.device_dispatcher import _CommandDispatcher  # noqa: E402
 from tuya_ble_mesh.exceptions import MeshConnectionError  # noqa: E402
 from tuya_ble_mesh.protocol import (  # noqa: E402
     decode_status,
-    encode_compact_dp,
     parse_pair_response,
 )
 from tuya_ble_mesh.provisioner import set_mesh_credentials  # noqa: E402
@@ -123,27 +123,36 @@ class TestCommands:
         ]
 
     @pytest.mark.asyncio
-    async def test_brightness_and_temp_use_compact_dps(self) -> None:
+    async def test_brightness_temp_and_colour_use_e2(self) -> None:
+        """The Smart Life app sends these as one 0xE2 packet:
+        09 | R G B | warm cold | brightness % | 00 | mask."""
         device, send = self._device(TUYA_LIGHT_VENDOR_ID)
-        await device.send_brightness(50)
+        await device.send_brightness(20)
         await device.send_color_temp(127)
         await device.send_color_temp(0)
-        assert send.call_args_list[0].args == (TELINK_CMD_DP_WRITE, encode_compact_dp(122, 2, 50))
-        # DP 123 reads only the second-lowest byte; 0 is ignored, so full warm is 0x0100
-        assert send.call_args_list[1].args == (
-            TELINK_CMD_DP_WRITE,
-            encode_compact_dp(123, 2, 0xFF00),
-        )
-        assert send.call_args_list[2].args == (
-            TELINK_CMD_DP_WRITE,
-            encode_compact_dp(123, 2, 0x0100),
-        )
+        await device.send_color(255, 0, 0)
+        assert [c.args for c in send.call_args_list] == [
+            (TELINK_CMD_COLOR, bytes.fromhex("090000000000140004")),
+            (TELINK_CMD_COLOR, bytes.fromhex("0900000000ff000018")),  # full cold
+            (TELINK_CMD_COLOR, bytes.fromhex("09000000ff00000018")),  # full warm
+            (TELINK_CMD_COLOR, bytes.fromhex("09ff000000000000e0")),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_colour_brightness_and_mode(self) -> None:
+        device, send = self._device(TUYA_LIGHT_VENDOR_ID)
+        await device.send_color_brightness(255)
+        await device.send_light_mode(1)  # the E2 mask switches modes on its own
+        assert [c.args for c in send.call_args_list] == [
+            (TELINK_CMD_COLOR, bytes.fromhex("090000000000640004")),
+        ]
 
     def test_command_vendor_per_opcode(self) -> None:
         device = MeshDevice(MAC, b"out_of_mesh", b"123456")
         assert device._command_vendor(TELINK_CMD_POWER) == TELINK_VENDOR_ID
         device._tuya_light = True
         assert device._command_vendor(TELINK_CMD_POWER) == TUYA_LIGHT_VENDOR_ID
+        assert device._command_vendor(TELINK_CMD_COLOR) == TUYA_LIGHT_VENDOR_ID
         assert device._command_vendor(TELINK_CMD_DP_WRITE) == TELINK_VENDOR_ID
 
     @pytest.mark.asyncio

@@ -14,6 +14,7 @@ import contextlib  # CF-3: For suppress in _stop_keep_alive
 import enum
 import logging
 import random
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -29,6 +30,7 @@ from tuya_ble_mesh.const import (
     TELINK_CHAR_STATUS,
     TELINK_CMD_STATUS_QUERY,
     TELINK_VENDOR_ID,
+    TUYA_MESH_DEFAULT_NAME,
 )
 from tuya_ble_mesh.exceptions import DisconnectedError, MeshConnectionError
 from tuya_ble_mesh.protocol import encode_command_packet
@@ -131,7 +133,8 @@ class BLEConnection:
         self._client: BleakClient | None = None
         self._session_key: bytearray | None = None
         self._firmware_version: str | None = None
-        self._sequence: int = 0
+        # The light drops sequence numbers below the last it saw; start above any earlier run
+        self._sequence: int = int(time.time()) & _MAX_SEQUENCE
         self._sequence_lock = asyncio.Lock()
         self._keep_alive_task: asyncio.Task[None] | None = None
         self._disconnect_callbacks: list[DisconnectCallback] = []
@@ -314,17 +317,19 @@ class BLEConnection:
         self._state = ConnectionState.PAIRING
 
         try:
-            # PLAT-733: Always send set_mesh_credentials after pair handshake.
-            # Even when re-setting the SAME name/password, the device needs the
-            # SET_NAME (0x04) + SET_PASSWORD (0x05) commands to transition from
-            # pairing mode to provisioned state.  Without them the LED keeps
-            # blinking and the device ignores encrypted commands on char 1912.
+            # PLAT-733: on the default credentials the device needs SET_NAME (0x04)
+            # + SET_PASSWORD (0x05) after the pair handshake to leave pairing mode;
+            # without them it ignores encrypted commands on char 1912.
+            # A device on its own credentials is already provisioned: rewriting
+            # them makes Tuya lights flash on every connect (e.g. each time a wall
+            # switch powers them on), so log in only.
+            rewrite = self._mesh_name == TUYA_MESH_DEFAULT_NAME.encode()
             key = await provision(
                 self._client,
                 current_name=self._mesh_name,
                 current_password=self._mesh_password,
-                new_name=self._mesh_name,
-                new_password=self._mesh_password,
+                new_name=self._mesh_name if rewrite else None,
+                new_password=self._mesh_password if rewrite else None,
             )
             self._session_key = bytearray(key)
         except Exception as exc:

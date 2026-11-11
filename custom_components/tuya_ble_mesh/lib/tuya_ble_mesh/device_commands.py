@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 
 from tuya_ble_mesh.const import (
     COMPACT_DP_BRIGHTNESS,
-    COMPACT_DP_COLOR_TEMP,
     COMPACT_DP_POWER,
     DP_TYPE_VALUE,
     TELINK_CMD_COLOR,
@@ -38,6 +37,22 @@ _LOGGER = logging.getLogger(__name__)
 
 # The integration's white temperature scale (light.py DEVICE_COLOR_TEMP_MAX)
 _TUYA_LIGHT_TEMP_MAX = 127
+
+# Tuya 0x0102 lights take brightness, white and RGB in one 0xE2 packet:
+# 09 | R G B | warm cold | brightness % | 00 | mask (which fields to apply)
+_TUYA_MASK_BRIGHTNESS = 0x04
+_TUYA_MASK_WHITE = 0x18
+_TUYA_MASK_RGB = 0xE0
+
+
+def _tuya_light_params(
+    rgb: tuple[int, int, int] = (0, 0, 0),
+    warm: int = 0,
+    cold: int = 0,
+    level: int = 0,
+    mask: int = 0,
+) -> bytes:
+    return bytes([0x09, *rgb, warm, cold, level, 0x00, mask])
 
 
 class DeviceCommandsMixin:
@@ -89,6 +104,11 @@ class DeviceCommandsMixin:
         if not 1 <= level <= 100:
             msg = f"Brightness must be 1..100, got {level}"
             raise ProtocolError(msg)
+        if self.is_tuya_light:
+            params = _tuya_light_params(level=level, mask=_TUYA_MASK_BRIGHTNESS)
+            await self.send_command(TELINK_CMD_COLOR, params)
+            _LOGGER.info("Brightness %d%% sent to %s", level, self._address)
+            return
         params = encode_compact_dp(COMPACT_DP_BRIGHTNESS, DP_TYPE_VALUE, level)
         await self.send_command(TELINK_CMD_DP_WRITE, params)
         _LOGGER.info("Brightness %d%% sent to %s", level, self._address)
@@ -106,12 +126,11 @@ class DeviceCommandsMixin:
             msg = f"Color temp must be 0..255, got {temp}"
             raise ProtocolError(msg)
         if self.is_tuya_light:
-            # 0 (warm) to 127 (cold) on the integration's scale, sent in the
-            # second-lowest byte. The lamp drops 0, and 0x0100 is already full warm.
-            level = max(1, round(min(temp, _TUYA_LIGHT_TEMP_MAX) * 0xFF / _TUYA_LIGHT_TEMP_MAX))
-            params = encode_compact_dp(COMPACT_DP_COLOR_TEMP, DP_TYPE_VALUE, level << 8)
-            await self.send_command(TELINK_CMD_DP_WRITE, params)
-            _LOGGER.info("Color temp %d (DP 123 level %d) sent to %s", temp, level, self._address)
+            # 0 (warm) to 127 (cold) on the integration's scale
+            cold = round(min(temp, _TUYA_LIGHT_TEMP_MAX) * 0xFF / _TUYA_LIGHT_TEMP_MAX)
+            params = _tuya_light_params(cold=cold, warm=0xFF - cold, mask=_TUYA_MASK_WHITE)
+            await self.send_command(TELINK_CMD_COLOR, params)
+            _LOGGER.info("Color temp %d (cold %d) sent to %s", temp, cold, self._address)
             return
         await self.send_command(TELINK_CMD_WHITE_TEMP, bytes([temp]))
         _LOGGER.info("Color temp %d sent to %s", temp, self._address)
@@ -131,6 +150,11 @@ class DeviceCommandsMixin:
             if not 0 <= val <= 0xFF:
                 msg = f"{name} must be 0..255, got {val}"
                 raise ProtocolError(msg)
+        if self.is_tuya_light:
+            params = _tuya_light_params(rgb=(red, green, blue), mask=_TUYA_MASK_RGB)
+            await self.send_command(TELINK_CMD_COLOR, params)
+            _LOGGER.info("Color (%d,%d,%d) sent to %s", red, green, blue, self._address)
+            return
         await self.send_command(TELINK_CMD_COLOR, bytes([red, green, blue]))
         _LOGGER.info("Color (%d,%d,%d) sent to %s", red, green, blue, self._address)
 
@@ -146,6 +170,10 @@ class DeviceCommandsMixin:
         if not 0 <= level <= 0xFF:
             msg = f"Color brightness must be 0..255, got {level}"
             raise ProtocolError(msg)
+        if self.is_tuya_light:
+            # Brightness scales the RGB values in colour mode
+            await self.send_brightness(max(1, round(level * 100 / 0xFF)))
+            return
         await self.send_command(TELINK_CMD_COLOR_BRIGHTNESS, bytes([level]))
         _LOGGER.info("Color brightness %d sent to %s", level, self._address)
 
@@ -161,6 +189,8 @@ class DeviceCommandsMixin:
         if not 0 <= mode <= 0xFF:
             msg = f"Light mode must be 0..255, got {mode}"
             raise ProtocolError(msg)
+        if self.is_tuya_light:
+            return  # the 0xE2 mask switches between white and colour
         await self.send_command(TELINK_CMD_LIGHT_MODE, bytes([mode]))
         _LOGGER.info("Light mode %d sent to %s", mode, self._address)
 
