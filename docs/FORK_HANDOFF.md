@@ -44,28 +44,30 @@ Device type is `sig_light`. Status: working.
   - The connection drops are not caused by time sync.
   - No battery data is available over mesh.
 
-### Tuya white-label Telink ceiling light (Smart Life "WC Bulb", product `bXun1QKL`, MAC prefix `BC:23:4C`)
+### Tuya `0x0102` lights: Smart Life "WC Bulb" (`bXun1QKL`, MAC prefix `BC:23:4C`) and GE imagine Paragon downlights (`9lcrglpq`, MAC prefix `DC:23:4D`)
 
-Status: fixed in v0.42.13 from a user's report and local patch tested in Home Assistant. Nobody has confirmed it on hardware since.
+Status: the WC bulb was fixed in v0.42.13 from robin1333k's report and patch (11z4t/tuya-ble-mesh#2). robin1333k's later corrections are in v0.42.14. The GE downlights were added by oscarmorrison in PR #23 and tested on his lights. Nobody has run v0.42.14 on a WC bulb yet.
 
-The integration recognises the light from status packets that carry vendor bytes `02 01`. Its commands are:
+The integration recognises these lights from status packets that carry vendor bytes `02 01` or `05 01`, or from vendor `0x0102` set in setup. Their commands are:
 
-- Power is `0xD0` sent with vendor `0x0102`. The light ignores DP 121.
-- Brightness is DP 122, sent with vendor `0x1001`.
-- White is DP 123, sent with vendor `0x1001`. Only the second-lowest byte is read: `0x0100` is full warm and `0xFF00` full cold (`0` is ignored).
+- Power is `0xD0` sent with vendor `0x0102`. The lights ignore DP 121.
+- Brightness, white and RGB are one `0xE2` packet with vendor `0x0102`, which is what the Smart Life app sends. The lights ignore compact DP writes.
 
-How it behaves:
+How they behave:
 
-- **Status:** status comes as `0xDB` packets: byte 13 cold, byte 14 warm, byte 15 brightness %. There is no on/off field, and the lamp reports only every 30 s, so Home Assistant assumes the values it sent.
-- **Pairing:** after SET_NAME and SET_PASS the light answers `0x06` until the long-term key is written. The key is sent only when the light asks for it.
-- **Command spacing:** the lamp drops commands that arrive back to back, so the dispatcher spaces sends at least 0.4 s apart.
-- **Notifications:** `start_notify` can kill the BlueZ link. After one failure the integration skips it for that address, even across reloads, and a link that dies during notification setup fails the connect.
+- **Status:** `0xDB` (answer to a `0xDA` query) carries colour temperature and set brightness. `0xDC`, sent on every change and after a `0x01` write to `…1911`, carries the current brightness, with 0 meaning off. On/off comes from `0xDC`, and until the first one arrives HA shows what it sent.
+- **Confirmation:** a status query goes out 0.6 s after each command. 3.5 s after the command, HA compares the target with the light's report and resends up to twice. It only resends when a report has arrived since the command.
+- **Sequence:** the light drops packets whose sequence number is not above the last it saw, so the counter starts from the clock (PR #23). Before that, commands were ignored after every reload.
+- **Pairing:** after SET_NAME and SET_PASS the light answers `0x06` until the long-term key is written. The key is sent only when the light asks for it. A light already on its own credentials is logged in to without rewriting them, so it no longer flashes on connect.
+- **Command spacing:** the light drops packets that arrive back to back, so every write is spaced at least 0.4 s apart. This is done in `BLEConnection`.
+- **Notifications:** the WC bulb never answers the CCCD write. BlueZ (5.85 too) times out after 30 s and drops the link, so `start_notify` is skipped for that address after one failure. Without a subscription BlueZ delivers no notifications, so status then comes only from the queries above. robin1333k got reliable status with a raw L2CAP ATT client instead of bleak. That client is Linux-only, does not work through an ESPHome proxy, and is not included here.
 
-`docs/PROTOCOL.md` section 8 has the details. The Smart Life app also uses `0xE2` commands with vendor `0x0102`; they are not used here because nobody has tested them from Home Assistant.
+`docs/PROTOCOL.md` section 8 has the byte layouts.
 
 ## Open items
 
-- Get a test report (debug log of pairing and on/off) from an owner of the WC Bulb.
+- Get a v0.42.14 debug log (pairing, on/off, a reload) from a WC bulb owner, and check whether status arrives in poll-only mode on BlueZ. If it doesn't, consider robin1333k's L2CAP ATT client as an opt-in for local adapters.
+- The `0xDB` white channel order differs between the WC bulb (cold first) and the GE downlights (warm first). Decoding assumes cold first.
 - Check whether HSL colour on SIG lights looks dim. It maps to 0–50 % lightness, a one-line change.
 - Replace the deprecated `show_advanced_options` (5 call sites) before Home Assistant 2027.6.
 - Issues in the original 11z4t repo have not been reviewed against this fork. Its documents in `docs/BRANDS_SUBMISSION.md`, `docs/HA_CORE_SUBMISSION.md` and `docs/HA_DOCS_DRAFT.md` still point to the original repo on purpose.

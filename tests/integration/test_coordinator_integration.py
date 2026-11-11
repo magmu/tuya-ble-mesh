@@ -78,6 +78,7 @@ def make_mock_status(
     status.green = green
     status.blue = blue
     status.mesh_id = 1
+    status.power_report = False
     return status
 
 

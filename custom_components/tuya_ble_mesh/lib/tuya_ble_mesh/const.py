@@ -114,12 +114,21 @@ TELINK_VENDOR_ID = bytes([0x01, 0x10])
 # brightness (DP 122) and white (DP 123) work with vendor 0x1001. Status comes
 # as 0xDB packets.
 TUYA_LIGHT_VENDOR_ID: bytes = bytes([0x02, 0x01])
+# Vendor bytes these lights put in their status packets. The WC bulb tags 0xDB
+# with 02 01 and 0xDC with 05 01; GE imagine Paragon downlights use 05 01 for both.
+TUYA_LIGHT_STATUS_VENDORS: tuple[bytes, ...] = (TUYA_LIGHT_VENDOR_ID, bytes([0x05, 0x01]))
 TELINK_STATUS_OPCODE_OFFSET = 7
 TELINK_STATUS_VENDOR_OFFSET = 8
+# 0xDB answers a 0xDA query: R G B, two white channels, set brightness %, 00, mode.
 TELINK_STATUS_RESPONSE = 0xDB
 TUYA_LIGHT_STATUS_OFFSET_COLD = 13
 TUYA_LIGHT_STATUS_OFFSET_WARM = 14
 TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS = 15
+# 0xDC is sent by the lamp on every change and after 0x01 is written to char 1911:
+# address, sequence, brightness % (0 = off), ff white / aa colour. It is the only
+# packet that carries on/off.
+TELINK_STATUS_POWER_REPORT = 0xDC
+TUYA_LIGHT_REPORT_OFFSET_BRIGHTNESS = 12
 
 # Default Telink long-term key, sent when a device asks for one (pair opcode 0x06)
 # after SET_NAME and SET_PASS. Public protocol default, not a secret.

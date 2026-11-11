@@ -355,24 +355,41 @@ in every command packet. The vendor ID is stored little-endian on the wire.
 The vendor ID is now configurable via `MeshDevice(vendor_id=...)` and in the
 HA config flow. Default is `0x1001` (Malmbergs).
 
-### Tuya 0x0102 lights (v0.42.13)
+### Tuya 0x0102 lights (v0.42.14)
 
-These lights carry vendor bytes `02 01` in their status packets, and the
-integration switches to their commands when it sees them:
+These lights carry vendor bytes `02 01` or `05 01` in their status packets, and
+the integration switches to their commands when it sees either:
 
 | Action | Opcode | Vendor | Params |
 |--------|--------|--------|--------|
 | On / off | `0xD0` | `0x0102` | `01` / `00` (DP 121 is ignored) |
-| Brightness | `0xD2` | `0x1001` | DP 122, 1–100 % |
-| White balance | `0xD2` | `0x1001` | DP 123, 4-byte value; only the second-lowest byte is read: `0x0100` full warm, `0xFF00` full cold (`0` is ignored) |
+| Brightness, white, RGB | `0xE2` | `0x0102` | `09 \| R G B \| warm cold \| brightness % \| 00 \| mask`; masks `04` brightness, `18` white, `1C` white + brightness, `E0` RGB |
 
-Status arrives as opcode `0xDB` at byte 7, then `02 01`; byte 13 is the cold
-channel, byte 14 warm (they add up to 255), byte 15 brightness in percent. There
-is no on/off field, and `0xDC` packets are not status. Pairing: after SET_NAME
-(`0x04`) and SET_PASS (`0x05`) these lights answer `0x06` until the long-term key
-is written (`0x06` + encrypted LTK), then `0x07` SET_OK. The Smart Life app also
-sends power, brightness and white with `0xE2` and vendor `0x0102`; those are not
-used because they were not tested from HA.
+Two status packets, with the opcode at byte 7 and the vendor bytes at 8-9:
+
+- `0xDB` answers a `0xDA` query (about 0.2 s later): R G B at bytes 10-12, two
+  white channels at 13-14, set brightness % at 15, `00`, mode (last mask) at 17.
+  On the WC bulb byte 13 is cold; on the GE downlights it follows warm. The set
+  brightness keeps its value while the light is off. No on/off field.
+- `0xDC` is sent by the light on every change and after `0x01` is written to
+  char `…1911`: address, sequence, brightness % at byte 12 (0 = off), then `ff`
+  white or `aa` colour. This is the only packet that carries on/off.
+  Example, on at 20 %: `… dc 05 01 0b 29 14 ff 00`; off: `… dc 05 01 0b 6d 00 ff 00`.
+
+The light drops a packet whose sequence number is not above the last it saw, so
+the sequence starts from the clock. It also drops packets that arrive back to
+back, so every write (commands, queries, the `0x01` write) is spaced 0.4 s.
+
+Notifications: the WC bulb never answers the CCCD write that `start_notify`
+sends; BlueZ (5.82-5.85) times out after 30 s and drops the link. Without a
+subscription BlueZ delivers no notifications, so in that case the integration
+polls: a `0xDA` query 0.6 s after each command and every 30 s, then `0x01` to
+`…1911`. Reading `…1911` directly returns only `01`.
+
+Pairing: after SET_NAME (`0x04`) and SET_PASS (`0x05`) these lights answer
+`0x06` until the long-term key is written (`0x06` + encrypted LTK), then `0x07`
+SET_OK. A light already on its own mesh credentials is logged in to without
+rewriting them, which made it flash on every connect.
 
 ---
 

@@ -32,12 +32,14 @@ from tuya_ble_mesh.const import (
     STATUS_OFFSET_WHITE_BRIGHTNESS,
     STATUS_OFFSET_WHITE_TEMP,
     TELINK_STATUS_OPCODE_OFFSET,
+    TELINK_STATUS_POWER_REPORT,
     TELINK_STATUS_RESPONSE,
     TELINK_STATUS_VENDOR_OFFSET,
     TELINK_VENDOR_ID,
+    TUYA_LIGHT_REPORT_OFFSET_BRIGHTNESS,
     TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS,
     TUYA_LIGHT_STATUS_OFFSET_COLD,
-    TUYA_LIGHT_VENDOR_ID,
+    TUYA_LIGHT_STATUS_VENDORS,
 )
 from tuya_ble_mesh.crypto import crypt_payload, make_checksum, verify_checksum
 from tuya_ble_mesh.exceptions import MalformedPacketError, ProtocolError
@@ -99,6 +101,9 @@ class StatusResponse:
     blue: int
     # False when the packet has no on/off field (Tuya 0x0102 lights)
     power_known: bool = True
+    # True for a Tuya light 0xDC report: only on/off and the current brightness
+    # (white_brightness, 0 = off) are valid, the other fields are not.
+    power_report: bool = False
     # Vendor bytes the device used in this packet (empty if not read)
     vendor_id: bytes = b""
 
@@ -386,17 +391,18 @@ def decode_status(data: bytes) -> StatusResponse | None:
 
     Applies the STATUS_OFFSET_* constants from const.py to extract
     light state fields from the full notification buffer. Packets that
-    carry the Tuya light vendor bytes (02 01) use that lamp's layout:
-    only 0xDB is a status, with the cold channel, warm channel and
-    brightness percent at bytes 13-15 and no on/off field.
+    carry Tuya light vendor bytes (02 01 or 05 01) use those lamps' layout:
+    0xDB has the cold channel, warm channel and set brightness percent at
+    bytes 13-15 and no on/off field; 0xDC has the current brightness
+    percent at byte 12, where 0 means off (returned as a power report).
 
     Args:
         data: Full notification data with payload decrypted in place.
               Must be at least 19 bytes (up to blue at offset 18).
 
     Returns:
-        Parsed status fields, or None for a Tuya light packet that is not
-        a status (e.g. 0xDC).
+        Parsed status fields, or None for a Tuya light packet that is
+        neither 0xDB nor 0xDC.
 
     Raises:
         MalformedPacketError: If data is too short.
@@ -406,8 +412,23 @@ def decode_status(data: bytes) -> StatusResponse | None:
         raise MalformedPacketError(msg)
 
     vendor = bytes(data[TELINK_STATUS_VENDOR_OFFSET : TELINK_STATUS_VENDOR_OFFSET + 2])
-    if vendor == TUYA_LIGHT_VENDOR_ID:
-        if data[TELINK_STATUS_OPCODE_OFFSET] != TELINK_STATUS_RESPONSE:
+    if vendor in TUYA_LIGHT_STATUS_VENDORS:
+        opcode = data[TELINK_STATUS_OPCODE_OFFSET]
+        if opcode == TELINK_STATUS_POWER_REPORT:
+            return StatusResponse(
+                mesh_id=data[STATUS_OFFSET_MESH_ID],
+                mode=0,
+                white_brightness=data[TUYA_LIGHT_REPORT_OFFSET_BRIGHTNESS],
+                white_temp=0,
+                color_brightness=0,
+                red=0,
+                green=0,
+                blue=0,
+                power_known=True,
+                power_report=True,
+                vendor_id=vendor,
+            )
+        if opcode != TELINK_STATUS_RESPONSE:
             return None
         cold = data[TUYA_LIGHT_STATUS_OFFSET_COLD]
         return StatusResponse(

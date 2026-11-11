@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.14] — 2026-11-10 (magmu fork)
+
+### Fixed
+- Tuya `0x0102` lights: on/off now comes from the light's own `0xDC` report (byte 12 is the brightness %, 0 means off) instead of the last command HA sent. `0xDC` was ignored before
+- Tuya `0x0102` lights that tag their status with `05 01` (GE imagine Paragon downlights, and the WC bulb's `0xDC`) are recognised and their `0xDB` status is read with the right layout
+- The 0.4 s gap now applies to every write (commands, `0xDA` status queries and the `0x01` write to char `…1911`), not only to queued commands
+- Without a notification subscription (when `start_notify` failed, BlueZ 5.85 included) BlueZ delivers no status, so devices in poll-only mode are now asked for their state 0.6 s after each command and on connect, followed by a `0x01` write to char `…1911`
+
+### Added
+- Tuya `0x0102` lights: 3.5 s after a command HA compares the target with the light's report and resends up to twice if it differs. It only resends when a report has arrived since the command, and allows the colour temperature to be one step off
+- Tuya `0x0102` lights are asked for their status 0.6 s after each command, so the light's report confirms it
+
 ### Changed
 - Tuya `0x0102` lights: brightness, white and RGB use `0xE2` with vendor `0x0102` (`09 | R G B | warm cold | brightness % | 00 | mask`), as the Smart Life app sends them. Verified on GE imagine Paragon RGB+CCT downlights (Tuya `9lcrglpq`), which ignore the compact DPs
 - A light on its own mesh credentials is logged in to without rewriting them, so it no longer flashes on every connect; lights on `out_of_mesh` are still provisioned as before

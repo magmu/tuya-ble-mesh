@@ -33,6 +33,7 @@ from tuya_ble_mesh.const import (
     TELINK_CMD_COLOR,
     TELINK_CMD_POWER,
     TELINK_VENDOR_ID,
+    TUYA_LIGHT_STATUS_VENDORS,
     TUYA_LIGHT_VENDOR_ID,
 )
 from tuya_ble_mesh.device_commands import DeviceCommandsMixin
@@ -118,6 +119,9 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
             ble_device_callback=ble_device_callback,
             adapter=adapter,
         )
+        # Tuya lights report state only on request or after a change: ask for it
+        # right after commands so the light's own report confirms them.
+        self._conn.query_after_command = self._tuya_light
         self._status_callbacks: list[StatusCallback] = []
         self._disconnect_callbacks: list[DisconnectCallback] = []
         self._dispatcher = _CommandDispatcher(self)
@@ -243,14 +247,20 @@ class MeshDevice(DeviceCommandsMixin):  # type: ignore[misc]
             _LOGGER.debug("Notification is not a status packet, ignored")
             return
 
-        if status.vendor_id == TUYA_LIGHT_VENDOR_ID and not self._tuya_light:
-            # The lamp names its vendor in every status. Tuya 0x0102 lights ignore
-            # the DP 121 power command, so switch to their commands.
-            _LOGGER.info("%s reports vendor 0x0102, using Tuya light commands", self._address)
+        if status.vendor_id in TUYA_LIGHT_STATUS_VENDORS and not self._tuya_light:
+            # The lamp names its vendor in every status (02 01 or 05 01). Tuya
+            # 0x0102 lights ignore the DP 121 power command, so switch to their commands.
+            _LOGGER.info(
+                "%s reports vendor %s, using Tuya light commands",
+                self._address,
+                status.vendor_id.hex(" "),
+            )
             self._tuya_light = True
+            self._conn.query_after_command = True
 
         _LOGGER.debug(
-            "Status: mode=%d bright=%d temp=%d",
+            "Status%s: mode=%d bright=%d temp=%d",
+            " (power report)" if status.power_report else "",
             status.mode,
             status.white_brightness,
             status.white_temp,

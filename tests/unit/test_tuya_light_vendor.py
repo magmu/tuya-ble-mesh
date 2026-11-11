@@ -44,6 +44,9 @@ SESSION_KEY = bytes(range(16))
 
 # Status for 100 % brightness, full cold, as captured: ... db 02 01 00 00 00 ff 00 64 00 1c 00 00
 _STATUS_COLD_100 = bytes(7) + bytes.fromhex("db0201000000ff0064001c0000")
+# 0xDC reports as captured on the WC bulb: on at 20 %, and off
+_REPORT_ON_20 = bytes(7) + bytes.fromhex("dc05010b2914ff0000000000")
+_REPORT_OFF = bytes(7) + bytes.fromhex("dc05010b6d00ff0000000000")
 
 
 class TestStatusDecode:
@@ -63,9 +66,37 @@ class TestStatusDecode:
         assert status.white_temp == 0
         assert status.white_brightness == 1
 
-    def test_tuya_light_non_status_packet_ignored(self) -> None:
+    def test_power_report_on(self) -> None:
+        status = decode_status(_REPORT_ON_20)
+        assert status is not None
+        assert status.power_report is True
+        assert status.white_brightness == 20
+        assert status.vendor_id == bytes([0x05, 0x01])
+
+    def test_power_report_off(self) -> None:
+        status = decode_status(_REPORT_OFF)
+        assert status is not None
+        assert status.power_report is True
+        assert status.white_brightness == 0
+
+    def test_full_status_is_not_a_power_report(self) -> None:
+        status = decode_status(_STATUS_COLD_100)
+        assert status is not None
+        assert status.power_report is False
+
+    def test_0501_status_uses_tuya_layout(self) -> None:
+        """GE imagine Paragon downlights tag 0xDB with 05 01."""
         data = bytearray(_STATUS_COLD_100)
-        data[7] = 0xDC
+        data[8:10] = b"\x05\x01"
+        status = decode_status(bytes(data))
+        assert status is not None
+        assert status.white_brightness == 100
+        assert status.white_temp == 127
+        assert status.power_known is False
+
+    def test_tuya_light_other_packet_ignored(self) -> None:
+        data = bytearray(_STATUS_COLD_100)
+        data[7] = 0xDD
         assert decode_status(bytes(data)) is None
 
     def test_default_layout_unchanged(self) -> None:
@@ -178,23 +209,70 @@ class TestCommands:
         callback = MagicMock()
         device.register_status_callback(callback)
         data = bytearray(_STATUS_COLD_100)
-        data[7] = 0xDC
+        data[7] = 0xDD
         with patch("tuya_ble_mesh.device.decrypt_notification", return_value=bytes(data)):
             device._handle_notification(MagicMock(), bytearray(20))
         callback.assert_not_called()
 
+    def test_power_report_dispatched_and_detects_light(self) -> None:
+        device = MeshDevice(MAC, b"out_of_mesh", b"123456")
+        device._conn._session_key = bytearray(SESSION_KEY)
+        assert device._conn.query_after_command is False
+        received: list[object] = []
+        device.register_status_callback(received.append)
+        with patch("tuya_ble_mesh.device.decrypt_notification", return_value=_REPORT_ON_20):
+            device._handle_notification(MagicMock(), bytearray(20))
+        assert device.is_tuya_light is True
+        assert device._conn.query_after_command is True
+        assert len(received) == 1
 
-class TestDispatcherSpacing:
+    def test_configured_vendor_enables_query_after_command(self) -> None:
+        device = MeshDevice(MAC, b"m", b"p", vendor_id=TUYA_LIGHT_VENDOR_ID)
+        assert device._conn.query_after_command is True
+
+
+class TestWriteSpacing:
+    """The 0.4 s gap applies to every write: commands, queries and 0x01 to 1911."""
+
+    def _ready(self) -> tuple[BLEConnection, list[float]]:
+        conn = BLEConnection(MAC, b"out_of_mesh", b"123456")
+        written_at: list[float] = []
+
+        async def _write(*_args: object, **_kwargs: object) -> None:
+            written_at.append(time.monotonic())
+
+        client = AsyncMock()
+        client.write_gatt_char = _write
+        conn._client = client
+        conn._session_key = bytearray(SESSION_KEY)
+        conn._state = ConnectionState.READY
+        return conn, written_at
+
     @pytest.mark.asyncio
     async def test_back_to_back_commands_are_spaced(self) -> None:
+        conn, written_at = self._ready()
+        await conn.write_command(bytes(20))
+        await conn.write_command(bytes(20))
+        await conn._stop_keep_alive()
+        assert len(written_at) == 2
+        assert written_at[1] - written_at[0] >= 0.35
+
+    @pytest.mark.asyncio
+    async def test_query_and_report_request_are_spaced(self) -> None:
+        conn, written_at = self._ready()
+        conn._notify_active = False
+        await conn.write_command(bytes(20))
+        await conn._stop_keep_alive()
+        await conn._send_keep_alive()  # 0xDA query, then 0x01 to char 1911
+        assert len(written_at) == 3
+        assert written_at[1] - written_at[0] >= 0.35
+        assert written_at[2] - written_at[1] >= 0.35
+
+    @pytest.mark.asyncio
+    async def test_dispatcher_leaves_spacing_to_the_connection(self) -> None:
         device = MagicMock()
         device.is_connected = True
-        sent_at: list[float] = []
-
-        async def _send_now(*_args: object) -> None:
-            sent_at.append(time.monotonic())
-
-        device._send_now = _send_now
+        device._send_now = AsyncMock()
         dispatcher = _CommandDispatcher(device)
         dispatcher.start()
         try:
@@ -203,8 +281,68 @@ class TestDispatcherSpacing:
             await asyncio.wait_for(dispatcher._queue.join(), timeout=3)
         finally:
             await dispatcher.stop()
-        assert len(sent_at) == 2
-        assert sent_at[1] - sent_at[0] >= 0.35
+        assert device._send_now.await_count == 2
+
+
+class TestQueryAfterCommand:
+    @pytest.mark.asyncio
+    async def test_status_query_follows_command_quickly(self) -> None:
+        conn = BLEConnection(MAC, b"out_of_mesh", b"123456")
+        conn._client = AsyncMock()
+        conn._session_key = bytearray(SESSION_KEY)
+        conn._state = ConnectionState.READY
+        conn._notify_active = True
+        conn.query_after_command = True
+        with (
+            patch.object(conn, "_send_keep_alive", new=AsyncMock()) as query,
+            patch("tuya_ble_mesh.connection._QUERY_AFTER_COMMAND_DELAY", 0.01),
+        ):
+            await conn.write_command(bytes(20))
+            await asyncio.sleep(0.1)
+            await conn._stop_keep_alive()
+        query.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_push_mode_device_keeps_normal_interval(self) -> None:
+        conn = BLEConnection(MAC, b"out_of_mesh", b"123456")
+        conn._client = AsyncMock()
+        conn._session_key = bytearray(SESSION_KEY)
+        conn._state = ConnectionState.READY
+        conn._notify_active = True
+        with (
+            patch.object(conn, "_send_keep_alive", new=AsyncMock()) as query,
+            patch("tuya_ble_mesh.connection._QUERY_AFTER_COMMAND_DELAY", 0.01),
+        ):
+            await conn.write_command(bytes(20))
+            await asyncio.sleep(0.1)
+            await conn._stop_keep_alive()
+        query.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_poll_only_read_passes_full_packet_to_handler(self) -> None:
+        conn = BLEConnection(MAC, b"out_of_mesh", b"123456")
+        client = AsyncMock()
+        client.read_gatt_char = AsyncMock(return_value=bytes(20))
+        conn._client = client
+        conn._state = ConnectionState.READY
+        handler = MagicMock()
+        conn.set_notification_handler(handler)
+        with patch("tuya_ble_mesh.connection._WRITE_GAP", 0):
+            await conn._request_report()
+        handler.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_poll_only_short_read_is_ignored(self) -> None:
+        conn = BLEConnection(MAC, b"out_of_mesh", b"123456")
+        client = AsyncMock()
+        client.read_gatt_char = AsyncMock(return_value=b"\x01")
+        conn._client = client
+        conn._state = ConnectionState.READY
+        handler = MagicMock()
+        conn.set_notification_handler(handler)
+        with patch("tuya_ble_mesh.connection._WRITE_GAP", 0):
+            await conn._request_report()
+        handler.assert_not_called()
 
 
 class TestConnectionRecovery:

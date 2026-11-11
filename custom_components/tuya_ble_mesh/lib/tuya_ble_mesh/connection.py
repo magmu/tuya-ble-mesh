@@ -55,11 +55,25 @@ _JITTER_FACTOR = 0.2  # 0-20% random jitter
 _CONNECT_RETRY_BACKOFF_MULTIPLIER = 2.0
 _CONNECT_RETRY_MAX_BACKOFF = 8.0
 
-# Addresses where start_notify has failed. BlueZ often drops the link after a
-# failed start_notify, so later connects (also after an entry reload) skip it.
-# Pairing already enables status notifications by writing 0x01 to char 1911,
-# which is all the Smart Life app does.
+# Addresses where start_notify has failed. Some Telink lamps never answer the
+# CCCD write, BlueZ times out after 30 s and drops the link, so later connects
+# (also after an entry reload) skip it. Without a subscription BlueZ does not
+# pass notifications on, so those devices run in poll-only mode (see
+# _send_status_query). An ESPHome proxy writes the CCCD itself and may differ.
 _SKIP_START_NOTIFY: set[str] = set()
+
+# Minimum gap between any two writes (commands, status queries and the 0x01
+# notify-enable write). Lamps drop packets that arrive back to back.
+_WRITE_GAP = 0.4
+
+# Status query delay after a command, for devices that only report on request
+_QUERY_AFTER_COMMAND_DELAY = 0.6
+
+# Timeout for reading char 1911 in poll-only mode
+_STATUS_READ_TIMEOUT = 2.0
+
+# A full notification (header + encrypted payload) is 20 bytes
+_NOTIFICATION_SIZE = 20
 
 # start_notify can block until the BlueZ timeout on Telink devices
 _START_NOTIFY_TIMEOUT = 10.0
@@ -142,6 +156,12 @@ class BLEConnection:
         # True if start_notify succeeded; False = poll-only mode
         self._notify_active: bool = False
         self._disconnect_task: asyncio.Task[None] | None = None
+        # Serialises writes and keeps _WRITE_GAP between them
+        self._write_lock = asyncio.Lock()
+        self._last_write: float | None = None
+        # Query status shortly after every command (set for Tuya 0x0102 lights,
+        # which report only on request or after a change)
+        self.query_after_command: bool = False
 
     @property
     def state(self) -> ConnectionState:
@@ -243,12 +263,13 @@ class BLEConnection:
     async def _start_notify_safe(self) -> bool:
         """Subscribe to TELINK_CHAR_STATUS GATT notifications.
 
-        Telink BLE mesh devices do NOT support standard CCCD writes via
-        ``start_notify`` on BlueZ ≤ 5.83 (triggers EOFError that kills the
-        BleakClient).  We call ``start_notify`` anyway — on newer BlueZ and
-        non-Linux backends it works correctly.  On older BlueZ we catch the
-        error and fall back to *poll-only mode* where state updates arrive
-        exclusively via keep-alive status-query responses.
+        Some Telink devices never answer the CCCD write that ``start_notify``
+        sends. BlueZ then fails after its 30 s timeout and often drops the link;
+        this is seen on BlueZ 5.82, 5.83 and 5.85, so it is not version
+        specific. We call ``start_notify`` anyway, since it works on most
+        devices and backends. On failure we fall back to *poll-only mode*:
+        BlueZ only passes notifications on while subscribed, so state comes
+        from status queries (see ``_send_status_query``).
 
         Returns:
             ``True`` if GATT notification subscription is active.
@@ -348,7 +369,9 @@ class BLEConnection:
             raise MeshConnectionError(msg)
 
         self._state = ConnectionState.READY
-        await self._start_keep_alive()  # CF-3: Now awaited
+        # Devices that will not push their state get an early first query
+        quick = self.query_after_command or not self._notify_active
+        await self._start_keep_alive(_QUERY_AFTER_COMMAND_DELAY if quick else None)
         _LOGGER.info("Connected and provisioned: %s", self._address)
 
     async def _connect_with_retry(
@@ -489,15 +512,38 @@ class BLEConnection:
             raise DisconnectedError(msg)
 
         try:
-            await self._client.write_gatt_char(TELINK_CHAR_COMMAND, packet, response=False)
+            await self._spaced_write(TELINK_CHAR_COMMAND, packet)
         except (OSError, BleakError) as exc:
             _LOGGER.warning("Write failed, triggering disconnect: %s", type(exc).__name__)
             await self._handle_disconnect()
             msg = f"Write failed to {self._address}"
             raise MeshConnectionError(msg) from exc
 
-        # Reset keep-alive timer on successful write
-        await self._restart_keep_alive()  # CF-3: Now awaited
+        # Reset keep-alive timer on successful write. Devices that will not push
+        # their state are asked for it shortly after the command instead.
+        quick = self.query_after_command or not self._notify_active
+        await self._restart_keep_alive(_QUERY_AFTER_COMMAND_DELAY if quick else None)
+
+    async def _spaced_write(self, char: str, data: bytes, *, response: bool = False) -> None:
+        """Write to a characteristic, keeping _WRITE_GAP after the previous write.
+
+        Raises:
+            DisconnectedError: If the client is gone.
+            BleakError, OSError: If the write fails.
+        """
+        async with self._write_lock:
+            if self._last_write is not None:
+                wait = _WRITE_GAP - (time.monotonic() - self._last_write)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+            client = self._client
+            if client is None:
+                msg = "Not connected"
+                raise DisconnectedError(msg)
+            try:
+                await client.write_gatt_char(char, data, response=response)
+            finally:
+                self._last_write = time.monotonic()
 
     def _on_ble_disconnected(self, _client: BleakClient) -> None:
         """Handle the link dropping under us (bleak disconnected_callback).
@@ -528,13 +574,18 @@ class BLEConnection:
 
     # --- Keep-alive ---
 
-    async def _start_keep_alive(self) -> None:
+    async def _start_keep_alive(self, first_delay: float | None = None) -> None:
         """Start the keep-alive timer.
 
         CF-3: Now async to properly await _stop_keep_alive.
+
+        Args:
+            first_delay: Delay before the first status query (default:
+                KEEP_ALIVE_INTERVAL). Later queries follow every
+                KEEP_ALIVE_INTERVAL.
         """
         await self._stop_keep_alive()  # CF-3: Await for clean shutdown
-        self._keep_alive_task = asyncio.create_task(self._keep_alive_loop())
+        self._keep_alive_task = asyncio.create_task(self._keep_alive_loop(first_delay))
 
     async def _stop_keep_alive(self) -> None:
         """Stop the keep-alive timer.
@@ -548,19 +599,21 @@ class BLEConnection:
                 await self._keep_alive_task
             self._keep_alive_task = None
 
-    async def _restart_keep_alive(self) -> None:
+    async def _restart_keep_alive(self, first_delay: float | None = None) -> None:
         """Reset the keep-alive timer (called after real commands).
 
         CF-3: Now async to properly await _start_keep_alive.
         """
         if self._state == ConnectionState.READY:
-            await self._start_keep_alive()  # CF-3: Await for proper cleanup
+            await self._start_keep_alive(first_delay)  # CF-3: Await for proper cleanup
 
-    async def _keep_alive_loop(self) -> None:
+    async def _keep_alive_loop(self, first_delay: float | None = None) -> None:
         """Periodically send 0xDA status query to keep connection alive."""
+        delay = KEEP_ALIVE_INTERVAL if first_delay is None else first_delay
         try:
             while self._state == ConnectionState.READY:
-                await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+                await asyncio.sleep(delay)
+                delay = KEEP_ALIVE_INTERVAL
                 if self._state != ConnectionState.READY:
                     break
                 await self._send_keep_alive()
@@ -587,11 +640,48 @@ class BLEConnection:
                 _STATUS_QUERY_PARAM,
                 vendor_id=self._vendor_id,
             )
-            await self._client.write_gatt_char(TELINK_CHAR_COMMAND, packet, response=False)
+            await self._spaced_write(TELINK_CHAR_COMMAND, packet)
             _LOGGER.debug("Keep-alive sent (seq=%d)", seq)
-        except (OSError, BleakError):
+        except (OSError, BleakError, DisconnectedError):
             _LOGGER.warning("Keep-alive failed, triggering disconnect")
             await self._handle_disconnect()
+            return
+
+        if self.query_after_command or not self._notify_active:
+            await self._request_report()
+
+    async def _request_report(self) -> None:
+        """Ask for the device's own state report, and read it when not subscribed.
+
+        Writing 0x01 to char 1911 makes Tuya lights send their 0xDC report (on/off
+        and brightness), as the Smart Life app does after each query. Without a
+        notification subscription BlueZ does not deliver it, so in poll-only mode
+        char 1911 is also read and a full packet is passed to the handler.
+        Failures here are logged only; the next query detects a dead link.
+        """
+        try:
+            await self._spaced_write(TELINK_CHAR_STATUS, b"\x01", response=True)
+        except (OSError, BleakError, DisconnectedError) as exc:
+            _LOGGER.debug("Status enable write failed (%s)", type(exc).__name__)
+            return
+        if self._notify_active:
+            return
+
+        client = self._client
+        handler = self._notification_handler
+        if client is None or handler is None:
+            return
+        try:
+            raw = await asyncio.wait_for(
+                client.read_gatt_char(TELINK_CHAR_STATUS), timeout=_STATUS_READ_TIMEOUT
+            )
+        except (OSError, BleakError, TimeoutError) as exc:
+            _LOGGER.debug("Status read failed (%s)", type(exc).__name__)
+            return
+        if len(raw) < _NOTIFICATION_SIZE:
+            _LOGGER.debug("Status read returned %d bytes, no report (poll-only mode)", len(raw))
+            return
+        handler(None, bytearray(raw))
 
     # --- Backoff calculation ---
 
