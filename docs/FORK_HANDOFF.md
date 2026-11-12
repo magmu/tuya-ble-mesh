@@ -14,6 +14,7 @@ This fork of [11z4t/tuya-ble-mesh](https://github.com/11z4t/tuya-ble-mesh) adds 
 - Two PRs that both bump the version conflict on `manifest.json`. Merge `main` into the second one and keep the higher version.
 - Public repo rules:
   - No links to private chat, project or session pages in PRs, comments or commits.
+    Known exception: commit `662eb88` (2026-10-06, SIG Mesh lights over direct BLE) has one in its message. It is left in place, because removing it would rewrite every later commit on `main` and the v0.41.0+ release tags.
   - PR bodies end with a plain "Generated with Claude Code" line.
   - Never log or print secrets (see `CLAUDE.md`).
 
