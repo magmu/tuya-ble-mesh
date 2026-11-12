@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -46,7 +47,7 @@ from custom_components.tuya_ble_mesh.const import (
 from custom_components.tuya_ble_mesh.entity import TuyaBLEMeshEntity
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from homeassistant.core import HomeAssistant
 
@@ -72,6 +73,14 @@ _SCENES_BY_NAME: dict[str, int] = {v: k for k, v in MESH_SCENES.items()}
 
 # Debounce window for coalescing rapid slider commands (e.g. brightness drag)
 _COMMAND_DEBOUNCE_INTERVAL = 0.05  # 50 ms
+
+# Tuya 0x0102 lights: after a command, compare the target with the light's own
+# report and resend if it differs. The report arrives 0.3-0.8 s after the
+# command plus the 0.6 s status query, so 3.5 s leaves margin.
+_VERIFY_DELAY = 3.5  # seconds
+_VERIFY_MAX_RESENDS = 2
+# The reported colour temperature can be one step off the value sent
+_VERIFY_COLOR_TEMP_TOLERANCE = 1
 
 
 def brightness_to_ha(device_value: int) -> int:
@@ -296,6 +305,7 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
         self._attr_unique_id = f"{coordinator.device.address}_light"
         self._transition_task: asyncio.Task[None] | None = None
         self._pending_command_task: asyncio.Task[None] | None = None
+        self._verify_task: asyncio.Task[None] | None = None
         # PLAT-756: Semaphore to serialize light transitions and prevent race conditions
         self._transition_lock = asyncio.Lock()
 
@@ -392,6 +402,7 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
         """
         self._cancel_transition()
         self._cancel_pending_command()
+        self._cancel_verify()
 
         # Handle scene/effect activation immediately (no debounce needed)
         effect: str | None = kwargs.get("effect")
@@ -451,44 +462,68 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
         self._pending_command_task = None
 
         async with self._transition_lock:
-            device = self.coordinator.device
+            target = await self._send_turn_on(brightness, color_temp, rgb_color, has_target)
 
-            if rgb_color is not None:
-                await device.send_color(rgb_color[0], rgb_color[1], rgb_color[2])
-                await device.send_light_mode(1)
-                _LOGGER.debug("Set RGB color: (%d,%d,%d)", *rgb_color)
-                if brightness is not None:
-                    await device.send_color_brightness(brightness)
-                    _LOGGER.debug("Set color brightness: %d", brightness)
-                return
+        if target is not None and self._is_tuya_light:
 
-            sent: dict[str, int] = {}
-            if color_temp is not None:
-                if self.coordinator.state.mode == 1:
-                    await device.send_light_mode(0)
-                device_temp = color_temp_to_device(color_temp)
-                await device.send_color_temp(device_temp)
-                sent["color_temp"] = device_temp
-                _LOGGER.debug("Set color temp: HA %d mireds -> device %d", color_temp, device_temp)
+            async def _resend() -> None:
+                await self._send_turn_on(brightness, color_temp, rgb_color, has_target)
 
+            self._schedule_verify(target, _resend)
+
+    async def _send_turn_on(
+        self,
+        brightness: int | None,
+        color_temp: int | None,
+        rgb_color: tuple[int, int, int] | None,
+        has_target: bool,
+    ) -> dict[str, Any] | None:
+        """Send the turn-on commands. Call with _transition_lock held.
+
+        Returns:
+            The state the light should report afterwards (is_on and device
+            brightness / colour temperature sent), or None for RGB, whose
+            report is not parsed.
+        """
+        device = self.coordinator.device
+        if rgb_color is not None:
+            await device.send_color(rgb_color[0], rgb_color[1], rgb_color[2])
+            await device.send_light_mode(1)
+            _LOGGER.debug("Set RGB color: (%d,%d,%d)", *rgb_color)
             if brightness is not None:
-                if self.coordinator.state.mode == 1:
-                    await device.send_color_brightness(brightness)
-                    _LOGGER.debug("Set color brightness: %d", brightness)
-                else:
-                    device_brightness = brightness_to_device(brightness)
-                    await device.send_brightness(device_brightness)
-                    sent["brightness"] = device_brightness
-                    _LOGGER.debug(
-                        "Set brightness: HA %d -> device %d", brightness, device_brightness
-                    )
+                await device.send_color_brightness(brightness)
+                _LOGGER.debug("Set color brightness: %d", brightness)
+            return None
 
-            if not has_target or (self._no_power_status and not self.coordinator.state.is_on):
-                await self._send_power(True)
+        sent: dict[str, int] = {}
+        if color_temp is not None:
+            if self.coordinator.state.mode == 1:
+                await device.send_light_mode(0)
+            device_temp = color_temp_to_device(color_temp)
+            await device.send_color_temp(device_temp)
+            sent["color_temp"] = device_temp
+            _LOGGER.debug("Set color temp: HA %d mireds -> device %d", color_temp, device_temp)
 
-            if sent and self._no_power_status:
-                # These lamps only report every 30 s; show what was sent until then.
-                self.coordinator.assume_state(sent, sent)
+        if brightness is not None:
+            if self.coordinator.state.mode == 1:
+                await device.send_color_brightness(brightness)
+                _LOGGER.debug("Set color brightness: %d", brightness)
+            else:
+                device_brightness = brightness_to_device(brightness)
+                await device.send_brightness(device_brightness)
+                sent["brightness"] = device_brightness
+                _LOGGER.debug("Set brightness: HA %d -> device %d", brightness, device_brightness)
+
+        # Tuya lights store brightness / white while off without switching
+        # on. is_on comes from the light's 0xDC report once one has arrived.
+        if not has_target or (self._is_tuya_light and not self.coordinator.state.is_on):
+            await self._send_power(True)
+
+        if sent and self._is_tuya_light:
+            # Show what was sent until the light's own report arrives.
+            self.coordinator.assume_state(sent, sent)
+
+        return {"is_on": True, **sent}
 
     def _cancel_pending_command(self) -> None:
         """Cancel any pending debounced command task."""
@@ -504,6 +539,7 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
         """
         self._cancel_transition()
         self._cancel_pending_command()
+        self._cancel_verify()
         transition: float | None = kwargs.get(ATTR_TRANSITION)
 
         if transition is not None and transition > 0:
@@ -520,16 +556,103 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
 
         await self._send_power(False)
 
+        if self._is_tuya_light:
+
+            async def _resend() -> None:
+                await self._send_power(False)
+
+            self._schedule_verify({"is_on": False}, _resend)
+
     @property
-    def _no_power_status(self) -> bool:
-        """Return True when the device's status packets carry no on/off field."""
+    def _is_tuya_light(self) -> bool:
+        """Return True for Tuya 0x0102 lights (on/off only in their 0xDC report)."""
         return getattr(self.coordinator.device, "is_tuya_light", False) is True
 
     async def _send_power(self, on: bool) -> None:
-        """Send a power command, tracking the state for lamps that never report it."""
+        """Send a power command, showing the new state until the light reports it."""
         await self.coordinator.device.send_power(on)
-        if self._no_power_status:
+        if self._is_tuya_light:
             self.coordinator.assume_state({"is_on": on}, {"is_on": on})
+
+    # --- Check and resend (Tuya 0x0102 lights) ---
+
+    def _schedule_verify(
+        self, target: dict[str, Any], resend: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Check the light's report against target after _VERIFY_DELAY."""
+        self._cancel_verify()
+        self._verify_task = asyncio.create_task(
+            self._verify_and_resend(target, resend, time.monotonic())
+        )
+        self._verify_task.add_done_callback(_log_task_exc)
+
+    def _cancel_verify(self) -> None:
+        """Cancel a pending check (a newer command replaces its target)."""
+        if self._verify_task is not None and not self._verify_task.done():
+            self._verify_task.cancel()
+        self._verify_task = None
+
+    async def _verify_and_resend(
+        self,
+        target: dict[str, Any],
+        resend: Callable[[], Awaitable[None]],
+        sent_at: float,
+    ) -> None:
+        """Resend up to _VERIFY_MAX_RESENDS times while the report differs."""
+        for attempt in range(_VERIFY_MAX_RESENDS + 1):
+            await asyncio.sleep(_VERIFY_DELAY)
+            mismatched = self._report_mismatch(target, sent_at)
+            if mismatched is None:
+                _LOGGER.debug("No report from the light since the command, not checked")
+                return
+            if not mismatched:
+                return
+            if attempt == _VERIFY_MAX_RESENDS:
+                _LOGGER.debug(
+                    "Light still reports a different %s after %d resends",
+                    ", ".join(mismatched),
+                    _VERIFY_MAX_RESENDS,
+                )
+                return
+            _LOGGER.debug(
+                "Light reports a different %s, resending (%d/%d)",
+                ", ".join(mismatched),
+                attempt + 1,
+                _VERIFY_MAX_RESENDS,
+            )
+            sent_at = time.monotonic()
+            async with self._transition_lock:
+                await resend()
+
+    def _report_mismatch(self, target: dict[str, Any], sent_at: float) -> list[str] | None:
+        """Compare target with the reports that arrived after sent_at.
+
+        Returns:
+            Names of the fields that differ, or None when no report arrived
+            since the command (so nothing is resent blindly).
+        """
+        power_at = getattr(self.coordinator, "last_power_report", None)
+        status_at = getattr(self.coordinator, "last_status_report", None)
+        power_fresh = isinstance(power_at, float) and power_at > sent_at
+        status_fresh = isinstance(status_at, float) and status_at > sent_at
+        if not power_fresh and not status_fresh:
+            return None
+
+        state = self.coordinator.state
+        mismatched: list[str] = []
+        if power_fresh and "is_on" in target and state.is_on != target["is_on"]:
+            mismatched.append("on/off")
+        # 0xDB carries the set brightness; 0xDC the current one, while on
+        brightness_fresh = status_fresh or (power_fresh and state.is_on)
+        if brightness_fresh and "brightness" in target and state.brightness != target["brightness"]:
+            mismatched.append("brightness")
+        if (
+            status_fresh
+            and "color_temp" in target
+            and abs(state.color_temp - target["color_temp"]) > _VERIFY_COLOR_TEMP_TOLERANCE
+        ):
+            mismatched.append("colour temperature")
+        return mismatched
 
     def _cancel_transition(self) -> None:
         """Cancel any in-progress transition task."""
@@ -637,6 +760,7 @@ class TuyaBLEMeshLight(TuyaBLEMeshEntity, LightEntity):
         """Cancel in-progress transitions and pending commands when removed from HA."""
         self._cancel_transition()
         self._cancel_pending_command()
+        self._cancel_verify()
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator.

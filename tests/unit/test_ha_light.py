@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import sys
+import time
+from dataclasses import replace
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -423,6 +425,110 @@ class TestLightActions:
 
         coord.device.send_light_mode.assert_called_once_with(0)
         coord.device.send_color_temp.assert_called_once()
+
+
+@pytest.mark.requires_ha
+class TestTuyaCheckAndResend:
+    """Tuya 0x0102 lights: compare the target with the light's report, resend up to twice."""
+
+    _DELAY = 0.02
+
+    def _light(self, **state: object) -> tuple[TuyaBLEMeshLight, MagicMock]:
+        coord = make_mock_coordinator(**state)  # type: ignore[arg-type]
+        coord.device.is_tuya_light = True
+        coord.last_power_report = None
+        coord.last_status_report = None
+        return TuyaBLEMeshLight(coord, "test_entry"), coord
+
+    async def _settle(self, light: TuyaBLEMeshLight) -> None:
+        task = light._verify_task
+        if task is not None:
+            await asyncio.wait_for(task, timeout=2)
+
+    @pytest.mark.asyncio
+    async def test_no_resend_when_report_matches(self) -> None:
+        light, coord = self._light(is_on=False)
+        coord.last_power_report = time.monotonic() + 100  # report after the command
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", self._DELAY):
+            await light.async_turn_off()
+            await self._settle(light)
+        coord.device.send_power.assert_awaited_once_with(False)
+
+    @pytest.mark.asyncio
+    async def test_resends_at_most_twice(self) -> None:
+        light, coord = self._light(is_on=True)  # light keeps reporting on
+        coord.last_power_report = time.monotonic() + 100
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", self._DELAY):
+            await light.async_turn_off()
+            await self._settle(light)
+        assert coord.device.send_power.await_count == 3
+        assert all(c.args == (False,) for c in coord.device.send_power.await_args_list)
+
+    @pytest.mark.asyncio
+    async def test_no_resend_without_fresh_report(self) -> None:
+        light, coord = self._light(is_on=True)
+        coord.last_power_report = time.monotonic() - 100  # before the command
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", self._DELAY):
+            await light.async_turn_off()
+            await self._settle(light)
+        coord.device.send_power.assert_awaited_once_with(False)
+
+    @pytest.mark.asyncio
+    async def test_new_command_cancels_pending_check(self) -> None:
+        light, coord = self._light(is_on=True)
+        coord.last_power_report = time.monotonic() + 100
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", 0.2):
+            await light.async_turn_off()
+            first = light._verify_task
+            await _turn_on(light)  # the light reports on, matching the new target
+            assert first is not None and first.cancelled()
+            await self._settle(light)
+        assert [c.args for c in coord.device.send_power.await_args_list] == [(False,), (True,)]
+
+    @pytest.mark.asyncio
+    async def test_brightness_resent_when_status_differs(self) -> None:
+        light, coord = self._light(is_on=True, brightness=40)
+        coord.last_status_report = time.monotonic() + 100
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", self._DELAY):
+            await _turn_on(light, brightness=255)  # device 100 %
+            await self._settle(light)
+        assert coord.device.send_brightness.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_color_temp_one_step_off_is_accepted(self) -> None:
+        light, coord = self._light(is_on=True)
+        await _turn_on(light, color_temp_kelvin=3817)
+        sent = coord.device.send_color_temp.await_args.args[0]
+        coord.device.send_color_temp.reset_mock()
+        coord.state = replace(coord.state, color_temp=sent - 1)
+        coord.last_status_report = time.monotonic() + 100
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", self._DELAY):
+            await _turn_on(light, color_temp_kelvin=3817)
+            await self._settle(light)
+        coord.device.send_color_temp.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_turn_on_with_value_powers_on_when_reported_off(self) -> None:
+        light, coord = self._light(is_on=False)
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", self._DELAY):
+            await _turn_on(light, brightness=128)
+            await self._settle(light)
+        coord.device.send_power.assert_awaited_once_with(True)
+
+    @pytest.mark.asyncio
+    async def test_turn_on_with_value_skips_power_when_reported_on(self) -> None:
+        light, coord = self._light(is_on=True)
+        with patch("custom_components.tuya_ble_mesh.light._VERIFY_DELAY", self._DELAY):
+            await _turn_on(light, brightness=128)
+            await self._settle(light)
+        coord.device.send_power.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_default_light_is_not_checked(self) -> None:
+        coord = make_mock_coordinator()
+        light = TuyaBLEMeshLight(coord, "test_entry")
+        await light.async_turn_off()
+        assert light._verify_task is None
 
 
 @pytest.mark.requires_ha

@@ -492,11 +492,37 @@ class TestKeepAlive:
     @pytest.mark.asyncio
     async def test_keep_alive_sends_status_query(self) -> None:
         conn, client = _make_ready_conn()
+        conn._notify_active = True  # push mode: the query alone
 
         # Directly call _send_keep_alive
         await conn._send_keep_alive()
 
         client.write_gatt_char.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_requests_report_in_poll_only_mode(self) -> None:
+        """Tuya lights: the query is followed by 0x01 to char 1911."""
+        from tuya_ble_mesh.const import TELINK_CHAR_COMMAND, TELINK_CHAR_STATUS
+
+        conn, client = _make_ready_conn()
+        conn._notify_active = False
+        conn.query_after_command = True  # Tuya 0x0102 light
+        with patch("tuya_ble_mesh.connection._WRITE_GAP", 0):
+            await conn._send_keep_alive()
+
+        chars = [c.args[0] for c in client.write_gatt_char.call_args_list]
+        assert chars == [TELINK_CHAR_COMMAND, TELINK_CHAR_STATUS]
+        assert client.write_gatt_char.call_args_list[1].args[1] == b"\x01"
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_plain_query_for_other_devices_in_poll_only_mode(self) -> None:
+        """Malmbergs and other Telink devices keep the plain query, no 0x01 write."""
+        conn, client = _make_ready_conn()
+        conn._notify_active = False
+        await conn._send_keep_alive()
+
+        client.write_gatt_char.assert_called_once()
+        client.read_gatt_char.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_keep_alive_failure_triggers_disconnect(self) -> None:

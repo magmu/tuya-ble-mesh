@@ -67,6 +67,7 @@ def make_mock_status(
     status.green = 0
     status.blue = 0
     status.mesh_id = 1
+    status.power_report = False
     return status
 
 
@@ -113,6 +114,51 @@ class TestCoordinatorInit:
         coord.seed_firmware_version("old")
         coord.seed_firmware_version(None)
         assert coord.state.firmware_version == "new"
+
+
+@pytest.mark.requires_ha
+class TestTuyaPowerReport:
+    """0xDC reports from Tuya 0x0102 lights carry on/off and the current brightness."""
+
+    @staticmethod
+    def _decode(hex_payload: str) -> Any:
+        from tuya_ble_mesh.protocol import decode_status
+
+        return decode_status(bytes(7) + bytes.fromhex(hex_payload))
+
+    def test_report_on_sets_power_and_brightness(self) -> None:
+        coord = TuyaBLEMeshCoordinator(make_mock_device())
+        coord._on_status_update(self._decode("dc05010b2914ff0000000000"))
+        assert coord.state.is_on is True
+        assert coord.state.brightness == 20
+        assert coord.last_power_report is not None
+        assert coord.last_status_report is None
+
+    def test_report_off_keeps_set_brightness(self) -> None:
+        coord = TuyaBLEMeshCoordinator(make_mock_device())
+        coord._on_status_update(self._decode("dc05010b2914ff0000000000"))
+        coord._on_status_update(self._decode("dc05010b6d00ff0000000000"))
+        assert coord.state.is_on is False
+        assert coord.state.brightness == 20
+
+    def test_full_status_and_report_merge(self) -> None:
+        coord = TuyaBLEMeshCoordinator(make_mock_device())
+        # 0xDB: full cold, set brightness 100 %, no on/off
+        coord._on_status_update(self._decode("db0201000000ff0064001c0000"))
+        assert coord.last_status_report is not None
+        assert coord.state.color_temp == 127
+        coord._on_status_update(self._decode("dc05010b2914ff0000000000"))
+        assert coord.state.is_on is True
+        assert coord.state.brightness == 20
+        assert coord.state.color_temp == 127  # kept from 0xDB
+        assert coord.state.last_confirmed_state["color_temp"] == 127
+        assert coord.state.last_confirmed_state["is_on"] is True
+
+    def test_report_overrides_assumed_power(self) -> None:
+        coord = TuyaBLEMeshCoordinator(make_mock_device())
+        coord.assume_state({"is_on": True}, {"is_on": True})
+        coord._on_status_update(self._decode("dc05010b6d00ff0000000000"))
+        assert coord.state.is_on is False
 
 
 @pytest.mark.requires_ha

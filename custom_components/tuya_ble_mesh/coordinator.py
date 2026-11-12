@@ -156,6 +156,11 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
         self._device: AnyMeshDevice = device
         self.capabilities = DeviceCapabilities.from_device(device)
         self._state = TuyaBLEMeshDeviceState()
+        # time.monotonic() of the device's last own reports: a 0xDC power report
+        # (Tuya 0x0102 lights) and a full status. Used to check commands against
+        # what the light reported after them.
+        self.last_power_report: float | None = None
+        self.last_status_report: float | None = None
         # Which candidate time-reply layout to try next (see codec)
         self._timestamp_variant = _TIMESTAMP_FIRST_VARIANT
         self._hass = hass
@@ -779,6 +784,10 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             self._dispatch_update()
 
     def _on_status_update(self, status: StatusResponse) -> None:
+        if status.power_report:
+            self._on_power_report(status.white_brightness)
+            return
+        self.last_status_report = time.monotonic()
         was_available = self._state.available
         now = time.time()
         changed = (
@@ -819,6 +828,30 @@ class TuyaBLEMeshCoordinator(DataUpdateCoordinator[None]):  # type: ignore[misc]
             color_brightness=status.color_brightness,
             is_on=is_on,
             last_confirmed_state=confirmed,
+        )
+        self._conn_mgr.backoff = _INITIAL_BACKOFF
+        if changed:
+            self._conn_mgr.record_state_change()
+        if changed or not was_available:
+            self._dispatch_update()
+
+    def _on_power_report(self, brightness: int) -> None:
+        """Apply a Tuya light 0xDC report: current brightness %, 0 meaning off.
+
+        Only on/off and, while on, the brightness are taken; colour temperature
+        and the set brightness while off come from the 0xDB status.
+        """
+        self.last_power_report = time.monotonic()
+        was_available = self._state.available
+        is_on = brightness > 0
+        fields: dict[str, Any] = {"is_on": is_on}
+        if is_on:
+            fields["brightness"] = brightness
+        changed = any(getattr(self._state, key) != value for key, value in fields.items())
+        confirmed = dict(self._state.last_confirmed_state or {})
+        confirmed.update(fields)
+        self._state = self._make_notify_state(
+            time.time(), last_confirmed_state=MappingProxyType(confirmed), **fields
         )
         self._conn_mgr.backoff = _INITIAL_BACKOFF
         if changed:
