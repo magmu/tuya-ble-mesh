@@ -84,15 +84,35 @@ class TestStatusDecode:
         assert status is not None
         assert status.power_report is False
 
-    def test_0501_status_uses_tuya_layout(self) -> None:
-        """GE imagine Paragon downlights tag 0xDB with 05 01."""
+    def test_0501_status_uses_tuya_layout_warm_first(self) -> None:
+        """GE imagine Paragon downlights tag 0xDB with 05 01 and report warm first."""
         data = bytearray(_STATUS_COLD_100)
         data[8:10] = b"\x05\x01"
+        # bytes 13/14 = ff 00: full warm on these lights
         status = decode_status(bytes(data))
         assert status is not None
         assert status.white_brightness == 100
-        assert status.white_temp == 127
+        assert status.white_temp == 0
         assert status.power_known is False
+
+    def test_0501_status_full_cold(self) -> None:
+        data = bytearray(_STATUS_COLD_100)
+        data[8:10] = b"\x05\x01"
+        data[13], data[14] = 0x00, 0xFF
+        status = decode_status(bytes(data))
+        assert status is not None
+        assert status.white_temp == 127
+
+    def test_0501_status_round_trips_sent_white(self) -> None:
+        """A white value sent as warm/cold reads back the same on 05 01 lights."""
+        data = bytearray(_STATUS_COLD_100)
+        data[8:10] = b"\x05\x01"
+        for temp in (0, 40, 64, 127):
+            cold = round(temp * 0xFF / 127)
+            data[13], data[14] = 0xFF - cold, cold  # warm first, as the command
+            status = decode_status(bytes(data))
+            assert status is not None
+            assert abs(status.white_temp - temp) <= 1
 
     def test_tuya_light_other_packet_ignored(self) -> None:
         data = bytearray(_STATUS_COLD_100)

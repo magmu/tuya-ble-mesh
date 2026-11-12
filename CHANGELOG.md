@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.15] — 2026-11-12 (magmu fork)
+
+### Fixed
+- GE imagine Paragon downlights (`0xDB` tagged `05 01`): the white channels are read warm first, as these lights report them. v0.42.14 read them cold first like the WC bulb, so white tone showed reversed and check-and-resend resent every white change twice
+
 ## [0.42.14] — 2026-11-10 (magmu fork)
 
 ### Fixed

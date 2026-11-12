@@ -121,6 +121,8 @@ TELINK_STATUS_OPCODE_OFFSET = 7
 TELINK_STATUS_VENDOR_OFFSET = 8
 # 0xDB answers a 0xDA query: R G B, two white channels, set brightness %, 00, mode.
 TELINK_STATUS_RESPONSE = 0xDB
+# White channel offsets for a 0xDB tagged 02 01 (WC bulb). Lights that tag 0xDB
+# with 05 01 (GE imagine Paragon) swap them: warm at 13, cold at 14.
 TUYA_LIGHT_STATUS_OFFSET_COLD = 13
 TUYA_LIGHT_STATUS_OFFSET_WARM = 14
 TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS = 15

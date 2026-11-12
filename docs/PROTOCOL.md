@@ -369,7 +369,8 @@ Two status packets, with the opcode at byte 7 and the vendor bytes at 8-9:
 
 - `0xDB` answers a `0xDA` query (about 0.2 s later): R G B at bytes 10-12, two
   white channels at 13-14, set brightness % at 15, `00`, mode (last mask) at 17.
-  On the WC bulb byte 13 is cold; on the GE downlights it follows warm. The set
+  With `02 01` (WC bulb) byte 13 is cold; with `05 01` (GE downlights) byte
+  13 is warm and 14 cold. Decoding follows the vendor bytes. The set
   brightness keeps its value while the light is off. No on/off field.
 - `0xDC` is sent by the light on every change and after `0x01` is written to
   char `…1911`: address, sequence, brightness % at byte 12 (0 = off), then `ff`
