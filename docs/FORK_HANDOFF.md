@@ -67,7 +67,7 @@ How they behave:
 ## Open items
 
 - Get a v0.42.14 debug log (pairing, on/off, a reload) from a WC bulb owner, and check whether status arrives in poll-only mode on BlueZ. If it doesn't, consider robin1333k's L2CAP ATT client as an opt-in for local adapters.
-- The `0xDB` white channel order differs between the WC bulb (cold first) and the GE downlights (warm first). Decoding assumes cold first.
+- The `0xDB` white channel order is taken from the vendor bytes: cold first for `02 01` (WC bulb), warm first for `05 01` (GE downlights, per oscarmorrison's write-up; not yet confirmed from an HA debug log).
 - Check whether HSL colour on SIG lights looks dim. It maps to 0–50 % lightness, a one-line change.
 - Replace the deprecated `show_advanced_options` (5 call sites) before Home Assistant 2027.6.
 - Issues in the original 11z4t repo have not been reviewed against this fork. Its documents in `docs/BRANDS_SUBMISSION.md`, `docs/HA_CORE_SUBMISSION.md` and `docs/HA_DOCS_DRAFT.md` still point to the original repo on purpose.

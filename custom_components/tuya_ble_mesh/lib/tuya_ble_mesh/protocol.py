@@ -39,7 +39,9 @@ from tuya_ble_mesh.const import (
     TUYA_LIGHT_REPORT_OFFSET_BRIGHTNESS,
     TUYA_LIGHT_STATUS_OFFSET_BRIGHTNESS,
     TUYA_LIGHT_STATUS_OFFSET_COLD,
+    TUYA_LIGHT_STATUS_OFFSET_WARM,
     TUYA_LIGHT_STATUS_VENDORS,
+    TUYA_LIGHT_VENDOR_ID,
 )
 from tuya_ble_mesh.crypto import crypt_payload, make_checksum, verify_checksum
 from tuya_ble_mesh.exceptions import MalformedPacketError, ProtocolError
@@ -392,9 +394,10 @@ def decode_status(data: bytes) -> StatusResponse | None:
     Applies the STATUS_OFFSET_* constants from const.py to extract
     light state fields from the full notification buffer. Packets that
     carry Tuya light vendor bytes (02 01 or 05 01) use those lamps' layout:
-    0xDB has the cold channel, warm channel and set brightness percent at
-    bytes 13-15 and no on/off field; 0xDC has the current brightness
-    percent at byte 12, where 0 means off (returned as a power report).
+    0xDB has the two white channels and set brightness percent at bytes
+    13-15 (cold first with 02 01, warm first with 05 01) and no on/off
+    field; 0xDC has the current brightness percent at byte 12, where 0
+    means off (returned as a power report).
 
     Args:
         data: Full notification data with payload decrypted in place.
@@ -430,7 +433,14 @@ def decode_status(data: bytes) -> StatusResponse | None:
             )
         if opcode != TELINK_STATUS_RESPONSE:
             return None
-        cold = data[TUYA_LIGHT_STATUS_OFFSET_COLD]
+        # The WC bulb (0xDB tagged 02 01) reports cold first; GE imagine Paragon
+        # downlights (0xDB tagged 05 01) report warm first.
+        cold_offset = (
+            TUYA_LIGHT_STATUS_OFFSET_COLD
+            if vendor == TUYA_LIGHT_VENDOR_ID
+            else TUYA_LIGHT_STATUS_OFFSET_WARM
+        )
+        cold = data[cold_offset]
         return StatusResponse(
             mesh_id=data[STATUS_OFFSET_MESH_ID],
             mode=0,
