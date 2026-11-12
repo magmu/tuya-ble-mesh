@@ -382,9 +382,11 @@ back, so every write (commands, queries, the `0x01` write) is spaced 0.4 s.
 
 Notifications: the WC bulb never answers the CCCD write that `start_notify`
 sends; BlueZ (5.82-5.85) times out after 30 s and drops the link. Without a
-subscription BlueZ delivers no notifications, so in that case the integration
-polls: a `0xDA` query 0.6 s after each command and every 30 s, then `0x01` to
-`…1911`. Reading `…1911` directly returns only `01`.
+subscription BlueZ delivers no notifications. For Tuya lights the integration
+therefore queries `0xDA` 0.6 s after each command, on connect and every 30 s,
+then writes `0x01` to `…1911`. The light can't be recognised from its status
+then, so vendor `0x0102` has to be set in setup. Other Telink devices keep the
+plain 30 s query. Reading `…1911` directly returns only `01`.
 
 Pairing: after SET_NAME (`0x04`) and SET_PASS (`0x05`) these lights answer
 `0x06` until the long-term key is written (`0x06` + encrypted LTK), then `0x07`

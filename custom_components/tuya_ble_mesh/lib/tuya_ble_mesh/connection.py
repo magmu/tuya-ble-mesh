@@ -59,14 +59,14 @@ _CONNECT_RETRY_MAX_BACKOFF = 8.0
 # CCCD write, BlueZ times out after 30 s and drops the link, so later connects
 # (also after an entry reload) skip it. Without a subscription BlueZ does not
 # pass notifications on, so those devices run in poll-only mode (see
-# _send_status_query). An ESPHome proxy writes the CCCD itself and may differ.
+# _request_report). An ESPHome proxy writes the CCCD itself and may differ.
 _SKIP_START_NOTIFY: set[str] = set()
 
 # Minimum gap between any two writes (commands, status queries and the 0x01
 # notify-enable write). Lamps drop packets that arrive back to back.
 _WRITE_GAP = 0.4
 
-# Status query delay after a command, for devices that only report on request
+# Status query delay after a command, for Tuya lights (query_after_command)
 _QUERY_AFTER_COMMAND_DELAY = 0.6
 
 # Timeout for reading char 1911 in poll-only mode
@@ -159,8 +159,9 @@ class BLEConnection:
         # Serialises writes and keeps _WRITE_GAP between them
         self._write_lock = asyncio.Lock()
         self._last_write: float | None = None
-        # Query status shortly after every command (set for Tuya 0x0102 lights,
-        # which report only on request or after a change)
+        # Tuya 0x0102 lights: query status shortly after every command and on
+        # connect, and follow each query with 0x01 to char 1911 (plus a read of
+        # it in poll-only mode). Other devices keep the plain 30 s query.
         self.query_after_command: bool = False
 
     @property
@@ -269,7 +270,7 @@ class BLEConnection:
         specific. We call ``start_notify`` anyway, since it works on most
         devices and backends. On failure we fall back to *poll-only mode*:
         BlueZ only passes notifications on while subscribed, so state comes
-        from status queries (see ``_send_status_query``).
+        from status queries (see ``_request_report``).
 
         Returns:
             ``True`` if GATT notification subscription is active.
@@ -369,8 +370,8 @@ class BLEConnection:
             raise MeshConnectionError(msg)
 
         self._state = ConnectionState.READY
-        # Devices that will not push their state get an early first query
-        quick = self.query_after_command or not self._notify_active
+        # Tuya lights get an early first query so HA shows their state
+        quick = self.query_after_command
         await self._start_keep_alive(_QUERY_AFTER_COMMAND_DELAY if quick else None)
         _LOGGER.info("Connected and provisioned: %s", self._address)
 
@@ -519,9 +520,9 @@ class BLEConnection:
             msg = f"Write failed to {self._address}"
             raise MeshConnectionError(msg) from exc
 
-        # Reset keep-alive timer on successful write. Devices that will not push
-        # their state are asked for it shortly after the command instead.
-        quick = self.query_after_command or not self._notify_active
+        # Reset keep-alive timer on successful write. Tuya lights are asked for
+        # their state shortly after the command so their report confirms it.
+        quick = self.query_after_command
         await self._restart_keep_alive(_QUERY_AFTER_COMMAND_DELAY if quick else None)
 
     async def _spaced_write(self, char: str, data: bytes, *, response: bool = False) -> None:
@@ -647,7 +648,9 @@ class BLEConnection:
             await self._handle_disconnect()
             return
 
-        if self.query_after_command or not self._notify_active:
+        # Only Tuya lights: other Telink devices (e.g. Malmbergs) keep the plain
+        # query until this is tested on them.
+        if self.query_after_command:
             await self._request_report()
 
     async def _request_report(self) -> None:

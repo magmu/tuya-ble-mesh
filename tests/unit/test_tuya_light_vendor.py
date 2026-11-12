@@ -261,6 +261,7 @@ class TestWriteSpacing:
     async def test_query_and_report_request_are_spaced(self) -> None:
         conn, written_at = self._ready()
         conn._notify_active = False
+        conn.query_after_command = True
         await conn.write_command(bytes(20))
         await conn._stop_keep_alive()
         await conn._send_keep_alive()  # 0xDA query, then 0x01 to char 1911
@@ -309,6 +310,23 @@ class TestQueryAfterCommand:
         conn._session_key = bytearray(SESSION_KEY)
         conn._state = ConnectionState.READY
         conn._notify_active = True
+        with (
+            patch.object(conn, "_send_keep_alive", new=AsyncMock()) as query,
+            patch("tuya_ble_mesh.connection._QUERY_AFTER_COMMAND_DELAY", 0.01),
+        ):
+            await conn.write_command(bytes(20))
+            await asyncio.sleep(0.1)
+            await conn._stop_keep_alive()
+        query.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_poll_only_default_device_keeps_normal_interval(self) -> None:
+        """Malmbergs and other Telink devices are not queried after commands."""
+        conn = BLEConnection(MAC, b"out_of_mesh", b"123456")
+        conn._client = AsyncMock()
+        conn._session_key = bytearray(SESSION_KEY)
+        conn._state = ConnectionState.READY
+        conn._notify_active = False
         with (
             patch.object(conn, "_send_keep_alive", new=AsyncMock()) as query,
             patch("tuya_ble_mesh.connection._QUERY_AFTER_COMMAND_DELAY", 0.01),
